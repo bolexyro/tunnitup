@@ -2,7 +2,33 @@
 
 Tunnitup puts multiple local services behind one tunnel-ready HTTP endpoint. It is for development setups where ngrok, OutRay, or another provider gives you one permanent hostname but your application has a frontend, API, and other services.
 
-## Phase 1: local reverse proxy
+## Quick start
+
+Create a starter configuration for a frontend on port 3000 and an API on port 8000:
+
+```powershell
+tunnitup init 3000 --api 8000
+tunnitup validate
+tunnitup proxy
+```
+
+`tunnitup proxy` automatically discovers `tunnitup.toml` in the current directory. The generated file is deliberately small:
+
+```toml
+[proxy]
+host = "127.0.0.1"
+port = 8080
+connect_timeout = 10
+response_timeout = 60
+
+[routes]
+"/" = 3000
+"/api" = { upstream = 8000, strip_prefix = true }
+```
+
+Use `tunnitup init --force` only when you intentionally want to replace an existing file. Unknown fields, invalid ports, malformed routes, and TOML syntax errors are reported by `tunnitup validate` before the proxy starts.
+
+## Direct CLI usage
 
 The shortest useful command exposes one service:
 
@@ -33,6 +59,8 @@ The proxy listens on `127.0.0.1:8080` by default. Point ngrok at that port manua
 ```powershell
 ngrok http 8080
 ```
+
+Use `--config custom.toml` to load a different file. Listening and timeout flags can override configured settings, but config routes and CLI route mappings cannot be mixed; this keeps the effective routing table obvious.
 
 ## Proxy behavior
 
