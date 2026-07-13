@@ -4,6 +4,7 @@ from typing import Any
 from typer.testing import CliRunner
 
 from tunnitup.cli import app
+from tunnitup.providers.base import Tunnel
 from tunnitup.proxy import ROUTES_KEY
 
 runner = CliRunner()
@@ -115,3 +116,48 @@ def test_explicit_config_cannot_be_mixed_with_cli_routes() -> None:
 
     assert result.exit_code == 2
     assert "cannot be combined" in result.output
+
+
+def test_up_starts_proxy_and_provider_with_one_command(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+    fake_provider = object()
+
+    async def fake_run(
+        routes: Any,
+        host: str,
+        port: int,
+        settings: Any,
+        provider: Any,
+        **kwargs: Any,
+    ) -> None:
+        captured.update(
+            routes=routes,
+            host=host,
+            port=port,
+            settings=settings,
+            provider=provider,
+            public_url=kwargs["public_url"],
+        )
+        kwargs["on_ready"](Tunnel("ngrok", "https://stable.ngrok.app", "http://127.0.0.1:8080"))
+
+    monkeypatch.setattr("tunnitup.cli.create_provider", lambda _name: fake_provider)
+    monkeypatch.setattr("tunnitup.cli.run_proxy_with_tunnel", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["up", "3000", "--url", "https://stable.ngrok.app"],
+    )
+
+    assert result.exit_code == 0
+    assert "Tunnitup is online" in result.output
+    assert "https://stable.ngrok.app" in result.output
+    assert captured["provider"] is fake_provider
+    assert captured["public_url"] == "https://stable.ngrok.app"
+    assert captured["routes"].match("/").upstream.port == 3000
+
+
+def test_up_rejects_an_invalid_public_url() -> None:
+    result = runner.invoke(app, ["up", "3000", "--url", "http://example.test/path"])
+
+    assert result.exit_code == 2
+    assert "must be HTTPS" in result.output

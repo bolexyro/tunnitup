@@ -16,6 +16,11 @@ connect_timeout = 2.5
 response_timeout = 15
 shutdown_timeout = 4
 
+[tunnel]
+provider = "ngrok"
+url = "https://example.ngrok.app"
+startup_timeout = 8
+
 [routes]
 "/" = 3000
 "/api" = { upstream = "http://api.local:8000/v1", strip_prefix = true }
@@ -30,6 +35,9 @@ shutdown_timeout = 4
     assert config.settings.connect_timeout == 2.5
     assert config.settings.response_timeout == 15
     assert config.settings.shutdown_timeout == 4
+    assert config.tunnel.provider == "ngrok"
+    assert config.tunnel.url == "https://example.ngrok.app"
+    assert config.tunnel.startup_timeout == 8
     assert config.routes.match("/").upstream.port == 3000  # type: ignore[union-attr]
     api = config.routes.match("/api/users")
     assert api is not None
@@ -55,6 +63,14 @@ def test_starter_config_is_valid_and_can_include_an_api(tmp_path: Path) -> None:
         ('[routes]\n"/" = { strip_prefix = true }', "upstream is required"),
         ('[proxy]\nporrt = 8080\n[routes]\n"/" = 3000', "unknown field"),
         ('unexpected = true\n[routes]\n"/" = 3000', "unknown field"),
+        (
+            '[tunnel]\nprovider = "outray"\n[routes]\n"/" = 3000',
+            "currently be 'ngrok'",
+        ),
+        (
+            '[tunnel]\nurl = "http://example.ngrok.app/path"\n[routes]\n"/" = 3000',
+            "must be HTTPS",
+        ),
         ("[proxy", "invalid TOML"),
     ],
 )

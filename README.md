@@ -9,7 +9,7 @@ Create a starter configuration for a frontend on port 3000 and an API on port 80
 ```powershell
 tunnitup init 3000 --api 8000
 tunnitup validate
-tunnitup proxy
+tunnitup up
 ```
 
 `tunnitup proxy` automatically discovers `tunnitup.toml` in the current directory. The generated file is deliberately small:
@@ -21,12 +21,20 @@ port = 8080
 connect_timeout = 10
 response_timeout = 60
 
+[tunnel]
+provider = "ngrok"
+# url = "https://your-domain.ngrok.app"
+
 [routes]
 "/" = 3000
 "/api" = { upstream = 8000, strip_prefix = true }
 ```
 
 Use `tunnitup init --force` only when you intentionally want to replace an existing file. Unknown fields, invalid ports, malformed routes, and TOML syntax errors are reported by `tunnitup validate` before the proxy starts.
+
+`tunnitup up` requires the ngrok CLI on `PATH` and a valid ngrok configuration. Authenticate once with `ngrok config add-authtoken <token>`. If `tunnel.url` is omitted, ngrok selects the endpoint associated with the account; set it to your permanent HTTPS domain when you want the choice to be explicit.
+
+The command starts the local proxy, starts ngrok, discovers the matching public URL through ngrok's local Agent API, and stops both processes together when you press `Ctrl+C`.
 
 ## Direct CLI usage
 
@@ -54,13 +62,19 @@ Ports are shorthand for `http://127.0.0.1:<port>`. Full upstream URLs also work:
 tunnitup proxy https://localhost:3000 --route /api=http://dev-api.local:8000
 ```
 
-The proxy listens on `127.0.0.1:8080` by default. Point ngrok at that port manually during Phase 1:
+The proxy listens on `127.0.0.1:8080` by default. Run it without opening a tunnel when debugging local routing:
 
 ```powershell
-ngrok http 8080
+tunnitup proxy
 ```
 
 Use `--config custom.toml` to load a different file. Listening and timeout flags can override configured settings, but config routes and CLI route mappings cannot be mixed; this keeps the effective routing table obvious.
+
+For a one-off tunnel without a config file, the direct syntax also works:
+
+```powershell
+tunnitup up 3000 --route /api=8000 --url https://your-domain.ngrok.app
+```
 
 ## Proxy behavior
 

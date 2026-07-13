@@ -28,6 +28,8 @@ Phase 2 hardens that core with streamed request and response bodies, finite upst
 
 Phase 3 adds strict `tunnitup.toml` configuration through `config.py`. The supported workflow is `tunnitup init`, `tunnitup validate`, then `tunnitup proxy`, which automatically discovers the file. Preserve concise route syntax, strict unknown-field rejection, overwrite protection, actionable errors, and unambiguous CLI/config precedence.
 
+Phase 4 adds `tunnitup up`, the provider interface under `providers/`, and coordinated proxy/provider lifecycle management in `orchestration.py`. The ngrok adapter must preflight configuration, supervise its child process, discover the public URL through the local Agent API, redact credentials from diagnostics, report unexpected exits, and stop cleanly.
+
 ## Current Roadmap
 
 The canonical development roadmap is documented in `roadmap.html`. Work should follow its critical path:
@@ -36,11 +38,12 @@ The canonical development roadmap is documented in `roadmap.html`. Work should f
 2. Build longest-prefix HTTP routing independently of tunnel providers.
 3. Add streaming, forwarded-header handling, timeouts, failure handling, and graceful shutdown. **Complete.**
 4. Introduce validated `tunnitup.toml` configuration and developer-friendly commands. **Complete.**
-5. Integrate and supervise the installed ngrok CLI. This completes the first releasable version, `v0.1`.
-6. Add request observability, health checks, WebSockets, and server-sent events.
+5. Integrate and supervise the installed ngrok CLI. This completes the first releasable version, `v0.1`. **Complete.**
+6. Add request observability and health checks.
 7. Build the Textual TUI over the established core event model.
-8. Add OutRay and other providers through a provider-neutral interface.
-9. Prepare cross-platform packages, documentation, and open-source release automation.
+8. Add advanced HTTP behavior, including WebSockets and server-sent events.
+9. Add OutRay and other providers through a provider-neutral interface.
+10. Prepare cross-platform packages, documentation, and open-source release automation.
 
 Keep proxy, routing, configuration, provider, CLI, and TUI concerns separate. Provider-specific behavior must not leak into the routing core.
 

@@ -189,8 +189,8 @@
         <a href="#phase-3"><span>03</span>Configuration</a>
         <a href="#phase-4"><span>04</span>ngrok integration</a>
         <a href="#phase-5"><span>05</span>Observability</a>
-        <a href="#phase-6"><span>06</span>Advanced HTTP</a>
         <a href="#phase-7"><span>07</span>TUI</a>
+        <a href="#phase-6"><span>06</span>Advanced HTTP</a>
         <a href="#phase-8"><span>08</span>Providers</a>
         <a href="#phase-9"><span>09</span>Release quality</a>
       </nav>
@@ -243,7 +243,7 @@
       <article class="phase" id="phase-4">
         <div class="phase-number"><b>04</b><span>ngrok</span></div>
         <div class="phase-body">
-          <div class="phase-header"><h3>Connect the public tunnel</h3><span class="tag">v0.1 target</span></div>
+          <div class="phase-header"><h3>Connect the public tunnel</h3><span class="tag">Complete · v0.1</span></div>
           <p>Supervise an installed ngrok CLI and expose the proxy through the user's permanent domain.</p>
           <ul><li>CLI detection and auth checks</li><li>Proxy-port tunnel startup</li><li>Public URL discovery</li><li>Unexpected-exit reporting</li><li>Coordinated shutdown</li><li>Provider diagnostics</li></ul>
           <div class="acceptance"><b>Acceptance</b>$ tunnitup up --provider ngrok<br>One command starts the proxy, tunnel, and every configured route.</div>
@@ -261,21 +261,21 @@
         </div>
       </article>
 
-      <article class="phase" id="phase-6">
-        <div class="phase-number"><b>06</b><span>Advanced HTTP</span></div>
-        <div class="phase-body">
-          <div class="phase-header"><h3>Handle long-lived traffic</h3><span class="tag">Protocols</span></div>
-          <p>Treat upgrades and streaming as their own correctness milestone.</p>
-          <ul><li>WebSocket upgrades</li><li>Bidirectional forwarding</li><li>Server-sent events</li><li>Backpressure and cancellation</li><li>Configurable timeouts</li><li>Request-size limits</li></ul>
-        </div>
-      </article>
-
       <article class="phase" id="phase-7">
         <div class="phase-number"><b>07</b><span>Terminal UI</span></div>
         <div class="phase-body">
-          <div class="phase-header"><h3>Make operations visible</h3><span class="tag">Textual</span></div>
+          <div class="phase-header"><h3>Make operations visible</h3><span class="tag">Before advanced HTTP</span></div>
           <p>Build a TUI that observes and controls the core without owning proxy or provider logic.</p>
           <ul><li>Route and health overview</li><li>Live request stream</li><li>Filterable logs</li><li>Public URL display and copy</li><li>Keyboard-driven control</li><li>Clean terminal restoration</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-6">
+        <div class="phase-number"><b>06</b><span>Advanced HTTP</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Handle long-lived traffic</h3><span class="tag">After TUI</span></div>
+          <p>Treat upgrades and streaming as their own correctness milestone.</p>
+          <ul><li>WebSocket upgrades</li><li>Bidirectional forwarding</li><li>Server-sent events</li><li>Backpressure and cancellation</li><li>Configurable timeouts</li><li>Request-size limits</li></ul>
         </div>
       </article>
 

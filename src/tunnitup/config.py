@@ -5,6 +5,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from tunnitup.proxy import ProxySettings
 from tunnitup.routing import Route, RouteConfigurationError, RouteTable
@@ -17,12 +18,27 @@ class ConfigurationError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class TunnelSettings:
+    provider: str = "ngrok"
+    url: str | None = None
+    startup_timeout: float = 15.0
+
+
+@dataclass(frozen=True, slots=True)
 class TunnitupConfig:
     source: Path
     host: str
     port: int
     settings: ProxySettings
+    tunnel: TunnelSettings
     routes: RouteTable
+
+
+def normalize_tunnel_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
+        raise ConfigurationError("tunnel URL must be HTTPS and cannot contain a path")
+    return value.rstrip("/")
 
 
 def _reject_unknown_keys(values: dict[str, Any], allowed: set[str], location: str) -> None:
@@ -107,6 +123,31 @@ def _parse_routes(raw: Any) -> RouteTable:
         raise ConfigurationError(str(exc)) from exc
 
 
+def _parse_tunnel(raw: Any) -> TunnelSettings:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigurationError("[tunnel] must be a table")
+    _reject_unknown_keys(raw, {"provider", "url", "startup_timeout"}, "[tunnel]")
+
+    provider = raw.get("provider", "ngrok")
+    if not isinstance(provider, str) or provider != "ngrok":
+        raise ConfigurationError("tunnel.provider must currently be 'ngrok'")
+
+    url = raw.get("url")
+    if url is not None:
+        if not isinstance(url, str):
+            raise ConfigurationError("tunnel.url must be an HTTPS URL")
+        url = normalize_tunnel_url(url)
+
+    startup_timeout = _positive_number(
+        raw.get("startup_timeout"),
+        "tunnel.startup_timeout",
+        15.0,
+    )
+    return TunnelSettings(provider=provider, url=url, startup_timeout=startup_timeout)
+
+
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TunnitupConfig:
     try:
         text = path.read_text(encoding="utf-8")
@@ -122,14 +163,16 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TunnitupConfig:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigurationError(f"invalid TOML in {path}: {exc}") from exc
 
-    _reject_unknown_keys(raw, {"proxy", "routes"}, "configuration")
+    _reject_unknown_keys(raw, {"proxy", "routes", "tunnel"}, "configuration")
     host, port, settings = _parse_proxy(raw.get("proxy"))
+    tunnel = _parse_tunnel(raw.get("tunnel"))
     routes = _parse_routes(raw.get("routes"))
     return TunnitupConfig(
         source=path,
         host=host,
         port=port,
         settings=settings,
+        tunnel=tunnel,
         routes=routes,
     )
 
@@ -145,6 +188,10 @@ def render_starter_config(frontend: str = "3000", api: str | None = None) -> str
         "port = 8080",
         "connect_timeout = 10",
         "response_timeout = 60",
+        "",
+        "[tunnel]",
+        'provider = "ngrok"',
+        '# url = "https://your-domain.ngrok.app"',
         "",
         "[routes]",
         f'"/" = {toml_value(frontend)}',
