@@ -34,6 +34,18 @@ The proxy listens on `127.0.0.1:8080` by default. Point ngrok at that port manua
 ngrok http 8080
 ```
 
+## Proxy behavior
+
+Tunnitup streams request and response bodies instead of loading them fully into memory. It removes hop-by-hop headers, preserves tunnel-provided `X-Forwarded-*` context, does not share upstream cookies between callers, and follows redirects transparently instead of consuming them.
+
+Connection attempts time out after 10 seconds, and upstreams must produce data at least once every 60 seconds. These safe defaults can be adjusted for unusually slow development services:
+
+```powershell
+tunnitup proxy 3000 --connect-timeout 20 --response-timeout 120
+```
+
+An unavailable upstream returns `502 Bad Gateway`; an upstream that exceeds a configured timeout returns `504 Gateway Timeout`. Pressing `Ctrl+C` gives active handlers a bounded graceful-shutdown window.
+
 ## Development
 
 Use the development container so contributors do not need to install project dependencies on the host:

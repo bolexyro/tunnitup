@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 from aiohttp import web
 
-from tunnitup.proxy import create_proxy_app
+from tunnitup.proxy import ProxySettings, create_proxy_app
 from tunnitup.routing import Route, RouteConfigurationError, RouteTable, normalize_path
 
 app = typer.Typer(
@@ -27,9 +27,7 @@ def build_route_table(
     stripped_paths: list[str],
 ) -> RouteTable:
     specs = list(route_specs)
-    explicit_paths = {
-        normalize_path(spec.partition("=")[0]) for spec in specs if "=" in spec
-    }
+    explicit_paths = {normalize_path(spec.partition("=")[0]) for spec in specs if "=" in spec}
     if default_upstream:
         if "/" in explicit_paths:
             raise RouteConfigurationError(
@@ -88,6 +86,14 @@ def proxy(
         int,
         typer.Option("--port", "-p", min=1, max=65535, help="Local proxy port."),
     ] = 8080,
+    connect_timeout: Annotated[
+        float,
+        typer.Option(min=0.1, help="Seconds allowed to connect to an upstream."),
+    ] = 10.0,
+    response_timeout: Annotated[
+        float,
+        typer.Option(min=0.1, help="Seconds allowed between upstream response chunks."),
+    ] = 60.0,
 ) -> None:
     """Start the local path-based reverse proxy."""
     try:
@@ -104,8 +110,19 @@ def proxy(
         typer.echo(f"    {configured_route.path:<12} -> {configured_route.upstream}{suffix}")
     typer.echo("\nPress Ctrl+C to stop.\n")
 
+    settings = ProxySettings(
+        connect_timeout=connect_timeout,
+        response_timeout=response_timeout,
+    )
     try:
-        web.run_app(create_proxy_app(route_table), host=host, port=port, print=None)
+        web.run_app(
+            create_proxy_app(route_table, settings),
+            host=host,
+            port=port,
+            print=None,
+            shutdown_timeout=settings.shutdown_timeout,
+            handler_cancellation=True,
+        )
     except OSError as exc:
         typer.secho(f"Could not start the proxy: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc

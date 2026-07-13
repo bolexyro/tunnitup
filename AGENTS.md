@@ -24,13 +24,15 @@ Phase 1 is implemented under `src/tunnitup/`:
 
 Tests live under `tests/`. The shortest supported command is `tunnitup proxy 3000`; add services with `--route /api=8000`.
 
+Phase 2 hardens that core with streamed request and response bodies, finite upstream timeouts, distinct `502`/`504` failures, hop-by-hop header filtering, forwarded-context preservation, per-caller cookie isolation, handler cancellation on disconnect, and bounded graceful shutdown. Keep these guarantees covered by integration tests when changing proxy behavior.
+
 ## Current Roadmap
 
 The canonical development roadmap is documented in `roadmap.html`. Work should follow its critical path:
 
 1. Establish the Python package, CLI, tests, linting, and CI.
 2. Build longest-prefix HTTP routing independently of tunnel providers.
-3. Add streaming, forwarded-header handling, timeouts, failure handling, and graceful shutdown.
+3. Add streaming, forwarded-header handling, timeouts, failure handling, and graceful shutdown. **Complete.**
 4. Introduce validated `tunnitup.toml` configuration and developer-friendly commands.
 5. Integrate and supervise the installed ngrok CLI. This completes the first releasable version, `v0.1`.
 6. Add request observability, health checks, WebSockets, and server-sent events.
