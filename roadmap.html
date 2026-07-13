@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="The development roadmap for Tunnitup, a local reverse proxy for sharing one permanent tunnel domain across many services.">
+  <title>Tunnitup — Roadmap</title>
+  <style>
+    :root {
+      --fern: #4f7942;
+      --fern-dark: #284c2d;
+      --fern-deep: #17351f;
+      --fern-soft: #cfe2c9;
+      --fern-pale: #edf5e9;
+      --paper: #f8f5eb;
+      --ink: #172219;
+      --muted: #5d695e;
+      --line: #8eaa88;
+      --white: #fffef8;
+    }
+
+    * { box-sizing: border-box; border-radius: 0 !important; box-shadow: none !important; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(79, 121, 66, .065) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79, 121, 66, .065) 1px, transparent 1px);
+      background-size: 32px 32px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    a { color: inherit; }
+    .skip-link { position: absolute; left: -9999px; top: 0; }
+    .skip-link:focus { left: 0; z-index: 20; padding: .75rem 1rem; background: var(--white); border: 2px solid var(--fern-deep); }
+
+    .masthead {
+      min-height: 84vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      color: var(--white);
+      background: var(--fern-deep);
+      border-bottom: 8px solid var(--fern);
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.25rem clamp(1.25rem, 4vw, 4rem);
+      border-bottom: 1px solid rgba(255, 254, 248, .3);
+    }
+
+    .wordmark { font-size: 1rem; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; text-decoration: none; }
+    .nav-meta { color: var(--fern-soft); font: 700 .72rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+
+    .hero {
+      width: min(1320px, 100%);
+      margin: auto;
+      padding: clamp(4rem, 10vw, 8rem) clamp(1.25rem, 4vw, 4rem);
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(250px, .55fr);
+      align-items: end;
+      gap: clamp(2rem, 7vw, 7rem);
+    }
+
+    .eyebrow { margin: 0 0 1rem; color: var(--fern-soft); font: 750 .75rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { margin: 0; max-width: 900px; font-size: clamp(4rem, 11vw, 9.5rem); line-height: .82; letter-spacing: -.075em; }
+    .hero-copy { margin: 2rem 0 0; max-width: 700px; color: #dcebd8; font-size: clamp(1.05rem, 2vw, 1.35rem); }
+
+    .route-card { border: 1px solid var(--line); background: #1f4228; }
+    .route-card header { padding: .8rem 1rem; color: var(--fern-soft); border-bottom: 1px solid var(--line); font: 700 .7rem ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; letter-spacing: .14em; }
+    .route { display: grid; grid-template-columns: 70px 1fr; gap: 1rem; padding: 1rem; border-bottom: 1px solid rgba(142, 170, 136, .45); font: .84rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .route:last-child { border-bottom: 0; }
+    .route strong { color: var(--fern-soft); }
+    .route span { overflow-wrap: anywhere; color: var(--white); }
+
+    .hero-footer { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid rgba(255, 254, 248, .3); }
+    .metric { padding: 1rem clamp(1.25rem, 4vw, 4rem); border-right: 1px solid rgba(255, 254, 248, .3); }
+    .metric:last-child { border-right: 0; }
+    .metric b { display: block; color: var(--fern-soft); font-size: 1.35rem; }
+    .metric span { color: #b9cbb7; font: 700 .68rem ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; letter-spacing: .12em; }
+
+    .layout { width: min(1320px, calc(100% - 2.5rem)); margin: 0 auto; display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: clamp(2rem, 5vw, 5rem); padding: 6rem 0 8rem; }
+    .toc { position: sticky; top: 1.5rem; align-self: start; border-top: 4px solid var(--fern); }
+    .toc-title { margin: 0; padding: 1rem 0; color: var(--muted); font: 800 .7rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .16em; text-transform: uppercase; }
+    .toc a { display: grid; grid-template-columns: 2rem 1fr; padding: .7rem 0; border-top: 1px solid var(--line); text-decoration: none; font-size: .84rem; }
+    .toc a:hover, .toc a:focus { color: var(--fern-dark); background: var(--fern-pale); outline: 0; }
+    .toc a span { color: var(--fern); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .section-kicker { color: var(--fern); font: 800 .72rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .15em; text-transform: uppercase; }
+    h2 { margin: .35rem 0 1rem; font-size: clamp(2.5rem, 6vw, 5.5rem); line-height: .95; letter-spacing: -.055em; }
+    .intro { max-width: 780px; margin: 0 0 3rem; color: var(--muted); font-size: 1.1rem; }
+
+    .phase { scroll-margin-top: 2rem; display: grid; grid-template-columns: 108px minmax(0, 1fr); margin-bottom: 1.25rem; background: rgba(255, 254, 248, .92); border: 1px solid var(--line); }
+    .phase-number { display: flex; flex-direction: column; justify-content: space-between; padding: 1.25rem; color: var(--white); background: var(--fern); border-right: 1px solid var(--line); }
+    .phase-number b { font-size: 2.2rem; line-height: 1; }
+    .phase-number span { writing-mode: vertical-rl; transform: rotate(180deg); font: 750 .64rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .15em; text-transform: uppercase; }
+    .phase-body { padding: clamp(1.35rem, 3vw, 2.25rem); }
+    .phase-header { display: flex; justify-content: space-between; align-items: start; gap: 1rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--line); }
+    .phase h3 { margin: 0; font-size: clamp(1.4rem, 3vw, 2.2rem); line-height: 1.05; letter-spacing: -.03em; }
+    .tag { flex: 0 0 auto; padding: .35rem .55rem; color: var(--fern-dark); background: var(--fern-soft); border: 1px solid var(--line); font: 800 .62rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .phase p { color: var(--muted); }
+    .phase ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem 1.5rem; padding: 0; margin: 1.25rem 0; list-style: none; }
+    .phase li { position: relative; padding-left: 1rem; font-size: .94rem; }
+    .phase li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 6px; background: var(--fern); }
+    .acceptance { margin-top: 1.25rem; padding: 1rem; color: #dcebd8; background: var(--fern-deep); border-left: 6px solid var(--fern-soft); font: .82rem/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .acceptance b { display: block; color: var(--fern-soft); text-transform: uppercase; letter-spacing: .1em; }
+
+    .release-line { margin: 3rem 0; display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; color: var(--fern-dark); font: 850 .75rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .14em; text-transform: uppercase; }
+    .release-line::before, .release-line::after { content: ""; height: 3px; background: var(--fern); }
+
+    .guardrails { margin-top: 5rem; padding: clamp(1.5rem, 4vw, 3rem); color: var(--white); background: var(--fern-dark); border: 1px solid var(--fern-deep); }
+    .guardrails h3 { margin: 0 0 1rem; font-size: clamp(2rem, 4vw, 3.25rem); letter-spacing: -.04em; }
+    .guardrails p { color: #c7d9c4; }
+    .guardrail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; margin-top: 2rem; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+    .guardrail-grid span { padding: .9rem 1rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); font: .8rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    footer { display: flex; justify-content: space-between; gap: 1rem; padding: 2rem clamp(1.25rem, 4vw, 4rem); color: var(--fern-pale); background: var(--fern); border-top: 1px solid var(--fern-dark); font: 700 .72rem ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+
+    @media (max-width: 820px) {
+      .masthead { min-height: auto; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-footer { grid-template-columns: 1fr; }
+      .metric { border-right: 0; border-bottom: 1px solid rgba(255, 254, 248, .3); }
+      .layout { grid-template-columns: 1fr; padding-top: 4rem; }
+      .toc { position: static; }
+      .toc nav { display: grid; grid-template-columns: repeat(2, 1fr); }
+      .toc a:nth-child(even) { border-left: 1px solid var(--line); padding-left: .75rem; }
+    }
+
+    @media (max-width: 560px) {
+      .nav-meta { display: none; }
+      h1 { font-size: 4.2rem; }
+      .phase { grid-template-columns: 52px minmax(0, 1fr); }
+      .phase-number { padding: .75rem; }
+      .phase-number b { font-size: 1.25rem; }
+      .phase ul, .guardrail-grid { grid-template-columns: 1fr; }
+      .phase-header { display: block; }
+      .tag { display: inline-block; margin-top: .75rem; }
+      footer { flex-direction: column; }
+    }
+
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#roadmap">Skip to roadmap</a>
+
+  <header class="masthead">
+    <nav class="nav" aria-label="Primary navigation">
+      <a class="wordmark" href="#">Tunnitup</a>
+      <span class="nav-meta">Open-source infrastructure learning project</span>
+    </nav>
+
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Build plan · Python first · One tunnel, many services</p>
+        <h1>Roadmap.</h1>
+        <p class="hero-copy">A focused path from a correct local reverse proxy to a provider-aware terminal experience—without Nginx, Docker, or premature complexity.</p>
+      </div>
+
+      <aside class="route-card" aria-label="Example routes">
+        <header>One permanent domain</header>
+        <div class="route"><strong>/</strong><span>localhost:3000</span></div>
+        <div class="route"><strong>/api</strong><span>localhost:8000</span></div>
+        <div class="route"><strong>/hooks</strong><span>localhost:4000</span></div>
+      </aside>
+    </div>
+
+    <div class="hero-footer">
+      <div class="metric"><b>09</b><span>deliberate phases</span></div>
+      <div class="metric"><b>v0.1</b><span>ends with ngrok integration</span></div>
+      <div class="metric"><b>1 → many</b><span>domain-to-service routing</span></div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="toc" aria-label="Roadmap index">
+      <p class="toc-title">Roadmap index</p>
+      <nav>
+        <a href="#phase-0"><span>00</span>Foundation</a>
+        <a href="#phase-1"><span>01</span>Routing core</a>
+        <a href="#phase-2"><span>02</span>Proxy correctness</a>
+        <a href="#phase-3"><span>03</span>Configuration</a>
+        <a href="#phase-4"><span>04</span>ngrok integration</a>
+        <a href="#phase-5"><span>05</span>Observability</a>
+        <a href="#phase-6"><span>06</span>Advanced HTTP</a>
+        <a href="#phase-7"><span>07</span>TUI</a>
+        <a href="#phase-8"><span>08</span>Providers</a>
+        <a href="#phase-9"><span>09</span>Release quality</a>
+      </nav>
+    </aside>
+
+    <main id="roadmap">
+      <span class="section-kicker">Critical path</span>
+      <h2>Build the core.<br>Earn the interface.</h2>
+      <p class="intro">Every phase must leave behind a testable system. The proxy comes first, the tunnel provider second, and the TUI only after the underlying event model is trustworthy.</p>
+
+      <article class="phase" id="phase-0">
+        <div class="phase-number"><b>00</b><span>Foundation</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Establish the project</h3><span class="tag">Complete</span></div>
+          <p>Create a modern Python package with only the tooling needed to develop safely.</p>
+          <ul><li>Source package and CLI entry point</li><li>Ruff, pytest, and type checking</li><li>README and example configuration</li><li>CI for linting and tests</li></ul>
+          <div class="acceptance"><b>Acceptance</b>$ tunnitup --help</div>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-1">
+        <div class="phase-number"><b>01</b><span>Routing core</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Move the first request</h3><span class="tag">Complete</span></div>
+          <p>Build the reverse proxy independently of any public tunnel provider.</p>
+          <ul><li>Longest-prefix route matching</li><li>Methods, queries, headers, and bodies</li><li>Optional path-prefix stripping</li><li>Local-only binding and useful 502 errors</li></ul>
+          <div class="acceptance"><b>Acceptance</b>GET / → :3000<br>POST /api/users → :8000/users</div>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-2">
+        <div class="phase-number"><b>02</b><span>Correctness</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Make the proxy dependable</h3><span class="tag">Hardening</span></div>
+          <p>Turn the happy-path prototype into infrastructure that behaves predictably under failure.</p>
+          <ul><li>Streaming bodies and large uploads</li><li>Forwarded and hop-by-hop headers</li><li>Connection and response timeouts</li><li>Disconnects and graceful shutdown</li><li>Route conflict validation</li><li>Failure-focused integration tests</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-3">
+        <div class="phase-number"><b>03</b><span>Configuration</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Make it pleasant to operate</h3><span class="tag">Developer UX</span></div>
+          <p>Add <code>tunnitup.toml</code>, validation, project initialization, and readable startup output.</p>
+          <ul><li><code>tunnitup init</code></li><li><code>tunnitup validate</code></li><li>Clear route summaries</li><li>Actionable configuration errors</li></ul>
+          <div class="acceptance"><b>Acceptance</b>$ tunnitup proxy</div>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-4">
+        <div class="phase-number"><b>04</b><span>ngrok</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Connect the public tunnel</h3><span class="tag">v0.1 target</span></div>
+          <p>Supervise an installed ngrok CLI and expose the proxy through the user's permanent domain.</p>
+          <ul><li>CLI detection and auth checks</li><li>Proxy-port tunnel startup</li><li>Public URL discovery</li><li>Unexpected-exit reporting</li><li>Coordinated shutdown</li><li>Provider diagnostics</li></ul>
+          <div class="acceptance"><b>Acceptance</b>$ tunnitup up --provider ngrok<br>One command starts the proxy, tunnel, and every configured route.</div>
+        </div>
+      </article>
+
+      <div class="release-line" aria-label="Version 0.1 release boundary">First releasable version · v0.1</div>
+
+      <article class="phase" id="phase-5">
+        <div class="phase-number"><b>05</b><span>Observability</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Show what the system is doing</h3><span class="tag">Operations</span></div>
+          <p>Expose useful signals before designing the terminal interface that will consume them.</p>
+          <ul><li>Method, path, route, and status</li><li>Duration and active requests</li><li>Upstream health checks</li><li>Secret-aware log redaction</li><li>Human and structured output</li><li>Quiet and verbose modes</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-6">
+        <div class="phase-number"><b>06</b><span>Advanced HTTP</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Handle long-lived traffic</h3><span class="tag">Protocols</span></div>
+          <p>Treat upgrades and streaming as their own correctness milestone.</p>
+          <ul><li>WebSocket upgrades</li><li>Bidirectional forwarding</li><li>Server-sent events</li><li>Backpressure and cancellation</li><li>Configurable timeouts</li><li>Request-size limits</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-7">
+        <div class="phase-number"><b>07</b><span>Terminal UI</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Make operations visible</h3><span class="tag">Textual</span></div>
+          <p>Build a TUI that observes and controls the core without owning proxy or provider logic.</p>
+          <ul><li>Route and health overview</li><li>Live request stream</li><li>Filterable logs</li><li>Public URL display and copy</li><li>Keyboard-driven control</li><li>Clean terminal restoration</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-8">
+        <div class="phase-number"><b>08</b><span>Providers</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Move beyond one tunnel vendor</h3><span class="tag">Ecosystem</span></div>
+          <p>Extract the provider contract from proven ngrok behavior, then widen support.</p>
+          <ul><li>OutRay adapter</li><li>Cloudflare Tunnel adapter</li><li>Custom executable provider</li><li>Provider-specific auth guidance</li><li>Optional embedded ngrok SDK</li><li>Capability-aware configuration</li></ul>
+        </div>
+      </article>
+
+      <article class="phase" id="phase-9">
+        <div class="phase-number"><b>09</b><span>Release</span></div>
+        <div class="phase-body">
+          <div class="phase-header"><h3>Become a durable open-source tool</h3><span class="tag">Community</span></div>
+          <p>Make installation, contribution, and maintenance predictable across platforms.</p>
+          <ul><li>Cross-platform test matrix</li><li>PyPI and standalone builds</li><li>Architecture documentation</li><li>Security and contribution guides</li><li>End-to-end example project</li><li>Versioned releases and changelog</li></ul>
+        </div>
+      </article>
+
+      <section class="guardrails">
+        <span class="section-kicker">Scope guardrails</span>
+        <h3>Not before the core works.</h3>
+        <p>These ideas may be useful later, but they are intentionally outside the initial build.</p>
+        <div class="guardrail-grid">
+          <span>No Docker orchestration</span><span>No built-in TLS termination</span>
+          <span>No load balancing</span><span>No authentication gateway</span>
+          <span>No graphical interface</span><span>No plugin system</span>
+          <span>No automatic project edits</span><span>No Rust port without a reason</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <span>Tunnitup · one tunnel, many local services</span>
+    <span>Python first · infrastructure always</span>
+  </footer>
+</body>
+</html>
