@@ -32,6 +32,8 @@ Phase 4 adds `tunnitup up`, the provider interface under `providers/`, and coord
 
 Phase 5 establishes the UI-independent observability core in `observability.py`. Proxy requests publish bounded, secret-safe completion records and active-request changes through `ObservationStore`; `HealthMonitor` checks only configured upstreams and retains the latest status per route. Consumers must subscribe to this API rather than reaching into aiohttp handlers.
 
+Phase 7 adds the Textual interface in `tui.py` and opt-in service probing in `discovery.py`. `tunnitup tui` opens configured projects in the command center; projects without configuration follow the ports → editable paths → preview flow. Never scan ports the user did not provide, present heuristic paths as facts, or make the TUI own proxy/provider behavior.
+
 ## Current Roadmap
 
 The canonical development roadmap is documented in `roadmap.html`. Work should follow its critical path:
@@ -42,7 +44,7 @@ The canonical development roadmap is documented in `roadmap.html`. Work should f
 4. Introduce validated `tunnitup.toml` configuration and developer-friendly commands. **Complete.**
 5. Integrate and supervise the installed ngrok CLI. This completes the first releasable version, `v0.1`. **Complete.**
 6. Add request observability and health checks. **Core complete.**
-7. Build the Textual TUI over the established core event model.
+7. Build the Textual TUI over the established core event model. **Complete.**
 8. Add advanced HTTP behavior, including WebSockets and server-sent events.
 9. Add OutRay and other providers through a provider-neutral interface.
 10. Prepare cross-platform packages, documentation, and open-source release automation.

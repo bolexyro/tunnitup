@@ -390,5 +390,36 @@ def up(
         raise typer.Exit(1) from exc
 
 
+@app.command("tui")
+def tui_command(
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", help="Configuration file to use."),
+    ] = None,
+) -> None:
+    """Open the guided setup or command-center terminal interface."""
+    from tunnitup.tui import TuiRuntime, TunnitupApp
+
+    loaded: TunnitupConfig | None = None
+    if config is not None:
+        loaded = _load_config_or_exit(config)
+    elif DEFAULT_CONFIG_PATH.exists():
+        loaded = _load_config_or_exit(DEFAULT_CONFIG_PATH)
+
+    runtime = (
+        TuiRuntime(
+            routes=loaded.routes,
+            host=loaded.host,
+            port=loaded.port,
+            settings=loaded.settings,
+            tunnel=loaded.tunnel,
+            source=loaded.source,
+        )
+        if loaded is not None
+        else None
+    )
+    TunnitupApp(runtime).run()
+
+
 if __name__ == "__main__":
     app()

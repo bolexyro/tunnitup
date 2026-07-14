@@ -161,3 +161,21 @@ def test_up_rejects_an_invalid_public_url() -> None:
 
     assert result.exit_code == 2
     assert "must be HTTPS" in result.output
+
+
+def test_tui_opens_guided_setup_without_configuration(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(tui_app: Any) -> None:
+        captured["runtime"] = tui_app.runtime
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("tunnitup.tui.TunnitupApp.run", fake_run)
+
+    result = runner.invoke(app, ["tui"])
+
+    assert result.exit_code == 0
+    assert captured["runtime"] is None

@@ -36,6 +36,18 @@ Use `tunnitup init --force` only when you intentionally want to replace an exist
 
 The command starts the local proxy, starts ngrok, discovers the matching public URL through ngrok's local Agent API, and stops both processes together when you press `Ctrl+C`.
 
+## Terminal interface
+
+Open the terminal interface with:
+
+```powershell
+tunnitup tui
+```
+
+When `tunnitup.toml` exists, the TUI opens the command center with its configured routes. Without a config file, guided setup asks for localhost ports, probes only those ports, offers deterministic path suggestions, and lets you edit every path before previewing and launching. It does not scan arbitrary ports or modify project files.
+
+The command center displays the public URL, route health, active requests, and recent request outcomes. Press `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Q` to quit. Launching still requires an installed and authenticated ngrok CLI.
+
 ## Direct CLI usage
 
 The shortest useful command exposes one service:
