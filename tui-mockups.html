@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tunnitup TUI Directions</title>
+  <style>
+    :root {
+      --ink: #e6edf5;
+      --muted: #9aa8ba;
+      --accent: #1863a9;
+      --accent-bright: #4a9be8;
+      --accent-soft: #193e63;
+      --accent-pale: #243b55;
+      --paper: #171f2b;
+      --panel: #1d2836;
+      --line: #34465c;
+      --warn: #f0b45d;
+      --warn-bg: #4b3822;
+      --error: #ef8d84;
+      --error-bg: #4c2c31;
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
+    }
+
+    button, input { font: inherit; }
+    button { border-radius: 0; box-shadow: none; }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--accent-bright);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 800px;
+      margin: 0;
+      font-size: clamp(36px, 6vw, 72px);
+      font-weight: 650;
+      letter-spacing: -.055em;
+      line-height: .98;
+    }
+
+    .intro {
+      max-width: 720px;
+      margin: 22px 0 30px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      margin-bottom: 34px;
+    }
+
+    .principle {
+      min-height: 102px;
+      padding: 16px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .principle strong { display: block; margin-bottom: 8px; }
+    .principle span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+    .switcher {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
+      margin-bottom: 18px;
+      border-bottom: 2px solid var(--accent);
+    }
+
+    .switcher button {
+      padding: 12px 16px;
+      color: var(--accent-bright);
+      background: transparent;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      cursor: pointer;
+    }
+
+    .switcher button + button { border-left: 0; }
+    .switcher button[aria-selected="true"] { color: #fff; background: var(--accent); border-color: var(--accent); }
+    .switcher button:focus-visible, .terminal button:focus-visible { outline: 3px solid #d29b39; outline-offset: 2px; }
+
+    .concept { display: none; }
+    .concept.active { display: block; }
+
+    .concept-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 390px);
+      gap: 24px;
+      align-items: end;
+      margin: 24px 0 16px;
+    }
+
+    .concept-head h2 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.025em; }
+    .concept-head p { margin: 0; color: var(--muted); line-height: 1.55; }
+    .tradeoff { padding-left: 16px; border-left: 3px solid var(--accent); font-size: 14px; }
+
+    .terminal {
+      color: #dce7f2;
+      background: #101721;
+      border: 5px solid #26384e;
+      font-family: var(--mono);
+      min-height: 570px;
+    }
+
+    .terminal-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 13px;
+      color: #a8b6c8;
+      background: #1d2b3b;
+      border-bottom: 1px solid #34465c;
+      font-size: 12px;
+    }
+
+    .terminal button {
+      color: inherit;
+      background: transparent;
+      border: 1px solid #5d7390;
+      padding: 5px 9px;
+      font-family: var(--mono);
+      cursor: pointer;
+    }
+
+    .terminal button.primary { color: #f7fbff; background: #1863a9; border-color: #4a9be8; }
+    .terminal button.danger { color: #f6d1ca; border-color: #a85d52; }
+
+    .statusline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 18px;
+      padding: 13px 15px;
+      border-bottom: 1px solid #34465c;
+      font-size: 13px;
+    }
+
+    .status-dot { width: 9px; height: 9px; display: inline-block; margin-right: 7px; background: #5ac8fa; }
+    .public-url { color: #77b7f2; }
+    .key { color: #8ea2ba; }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: 36% 64%;
+      min-height: 470px;
+    }
+
+    .pane { min-width: 0; }
+    .pane + .pane { border-left: 1px solid #34465c; }
+
+    .pane-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      color: #91a4bb;
+      border-bottom: 1px solid #34465c;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .route-row {
+      display: grid;
+      grid-template-columns: minmax(75px, .7fr) minmax(100px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #27394e;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .route-row.selected { color: #f4f8fc; background: #1863a9; }
+    .route-row:hover:not(.selected) { background: #20364e; }
+    .route-path { color: #a9d2f6; }
+    .selected .route-path { color: #ffffff; }
+    .healthy { color: #5ac8fa; }
+    .selected .healthy { color: #e5f4ff; }
+
+    .traffic-head, .request-row {
+      display: grid;
+      grid-template-columns: 62px 52px minmax(110px, 1fr) 46px 62px;
+      gap: 8px;
+      padding: 9px 12px;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .traffic-head { color: #7f91a8; border-bottom: 1px solid #27394e; }
+    .request-row { border-bottom: 1px solid #223247; }
+    .method { color: #77b7f2; }
+    .code-ok { color: #5ac8fa; }
+    .code-warn { color: #f0c26b; }
+
+    .footer-help {
+      padding: 10px 13px;
+      color: #8799af;
+      background: #172332;
+      border-top: 1px solid #34465c;
+      font-size: 11px;
+    }
+
+    .route-workspace {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      min-height: 470px;
+    }
+
+    .route-table-head, .route-table-row {
+      display: grid;
+      grid-template-columns: 34px minmax(88px, .7fr) minmax(160px, 1.4fr) 80px 80px;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 13px;
+      font-size: 13px;
+    }
+
+    .route-table-head { color: #7f91a8; border-bottom: 1px solid #34465c; font-size: 11px; }
+    .route-table-row { border-bottom: 1px solid #27394e; }
+    .route-table-row.selected { background: #20364e; border-left: 4px solid #4a9be8; padding-left: 9px; }
+    .number { color: #71849d; }
+
+    .route-detail {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-content: start;
+      margin: 18px 13px;
+      border: 1px solid #34465c;
+    }
+
+    .detail-block { padding: 13px; border-bottom: 1px solid #34465c; }
+    .detail-block:nth-child(odd) { border-right: 1px solid #34465c; }
+    .detail-block small { display: block; color: #7f91a8; margin-bottom: 7px; }
+    .detail-actions { grid-column: 1 / -1; display: flex; gap: 8px; padding: 13px; }
+
+    .setup {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      min-height: 500px;
+    }
+
+    .steps { border-right: 1px solid #34465c; }
+    .step { padding: 15px 13px; color: #8294aa; border-bottom: 1px solid #27394e; font-size: 13px; }
+    .step.current { color: #ffffff; background: #1863a9; }
+    .step.done { color: #77b7f2; }
+
+    .setup-main { padding: 24px; }
+    .setup-main h3 { margin: 0 0 8px; color: #e8f1fa; font-size: 18px; }
+    .setup-main > p { margin: 0 0 24px; color: #91a4bb; font-size: 13px; line-height: 1.5; }
+
+    .setup-stage { display: none; }
+    .setup-stage.active { display: block; }
+
+    .field-label {
+      display: block;
+      margin-bottom: 8px;
+      color: #a8b6c8;
+      font-size: 12px;
+    }
+
+    .terminal input {
+      width: 100%;
+      min-width: 0;
+      padding: 10px 11px;
+      color: #e8f1fa;
+      background: #172332;
+      border: 1px solid #5d7390;
+      border-radius: 0;
+      outline-offset: 2px;
+      font-family: var(--mono);
+    }
+
+    .terminal input:focus { outline: 2px solid #4a9be8; }
+
+    .port-example {
+      margin-top: 9px;
+      color: #8498b0;
+      font-size: 11px;
+    }
+
+    .detect-box { border: 1px solid #34465c; }
+    .detect-row {
+      display: grid;
+      grid-template-columns: minmax(110px, .8fr) minmax(150px, 1.2fr) minmax(120px, .7fr);
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #27394e;
+      font-size: 13px;
+    }
+
+    .detect-row:last-child { border-bottom: 0; }
+    .check { color: #5ac8fa; }
+    .suggested { color: #8498b0; font-size: 11px; }
+    .setup-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+
+    .preview-row {
+      display: grid;
+      grid-template-columns: minmax(190px, 1fr) 26px minmax(150px, .8fr);
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #27394e;
+      font-size: 12px;
+    }
+
+    .preview-row:last-child { border-bottom: 0; }
+    .preview-row .public-url { overflow-wrap: anywhere; }
+
+    .recommendation {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      margin-top: 34px;
+      border: 1px solid var(--accent);
+    }
+
+    .recommendation > div { padding: 22px; }
+    .recommendation > div + div { border-left: 1px solid var(--accent); }
+    .recommendation h2 { margin: 0 0 10px; font-size: 22px; }
+    .recommendation p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .recommendation ol { margin: 0; padding-left: 20px; color: var(--muted); line-height: 1.8; }
+
+    @media (max-width: 760px) {
+      .page { width: min(100% - 20px, 1180px); padding-top: 28px; }
+      .principles { grid-template-columns: 1fr 1fr; }
+      .concept-head, .recommendation { grid-template-columns: 1fr; }
+      .tradeoff { margin-top: 4px; }
+      .recommendation > div + div { border-left: 0; border-top: 1px solid var(--accent); }
+      .dashboard { grid-template-columns: 1fr; }
+      .pane + .pane { border-left: 0; border-top: 1px solid #34465c; }
+      .terminal { min-height: 0; }
+      .traffic-head, .request-row { grid-template-columns: 54px 45px minmax(95px, 1fr) 42px; }
+      .traffic-head > :last-child, .request-row > :last-child { display: none; }
+      .setup { grid-template-columns: 1fr; }
+      .steps { display: flex; overflow: hidden; border-right: 0; border-bottom: 1px solid #34465c; }
+      .step { flex: 1; padding: 10px 6px; text-align: center; }
+      .step span { display: none; }
+      .route-table-head, .route-table-row { grid-template-columns: 28px minmax(80px, .7fr) minmax(120px, 1.3fr) 62px; }
+      .route-table-head > :last-child, .route-table-row > :last-child { display: none; }
+    }
+
+    @media (max-width: 480px) {
+      .principles { grid-template-columns: 1fr; }
+      .switcher { display: grid; grid-template-columns: 1fr; border-bottom: 0; }
+      .switcher button, .switcher button + button { border: 1px solid var(--line); border-bottom: 0; }
+      .switcher button:last-child { border-bottom: 1px solid var(--line); }
+      .terminal-bar { align-items: flex-start; flex-direction: column; }
+      .route-detail { grid-template-columns: 1fr; }
+      .detail-block:nth-child(odd) { border-right: 0; }
+      .detect-row, .preview-row { grid-template-columns: 1fr; }
+      .preview-row > :nth-child(2) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">Tunnitup · interaction study</p>
+    <h1>The proxy should feel simpler than the thing it hides.</h1>
+    <p class="intro">Three directions for the first TUI. Each uses the same project, routes, and tunnel state so the difference is the mental model: monitor a running system, manage routes, or get guided from zero to public.</p>
+
+    <section class="principles" aria-label="Design principles">
+      <div class="principle"><strong>One obvious start</strong><span>Enter local ports, confirm editable suggestions, press one key.</span></div>
+      <div class="principle"><strong>Plain-language failures</strong><span>Say which service failed and the exact next action.</span></div>
+      <div class="principle"><strong>Safe by default</strong><span>Preview public routes before opening the tunnel.</span></div>
+      <div class="principle"><strong>Details on demand</strong><span>Keep proxy vocabulary out of the primary workflow.</span></div>
+    </section>
+
+    <nav class="switcher" aria-label="Mockup direction">
+      <button type="button" data-concept="command" aria-selected="true">A · Command center</button>
+      <button type="button" data-concept="routes" aria-selected="false">B · Route workspace</button>
+      <button type="button" data-concept="guided" aria-selected="false">C · Guided launch</button>
+    </nav>
+
+    <section class="concept active" data-panel="command">
+      <div class="concept-head">
+        <div><h2>A · Command center</h2><p>Optimized for the thing users do most after setup: start the tunnel, confirm routes are healthy, and glance at recent requests.</p></div>
+        <p class="tradeoff"><strong>Best daily driver.</strong> Route editing is secondary, which keeps the running view calm but makes initial setup less discoverable.</p>
+      </div>
+      <div class="terminal" aria-label="Command center TUI mockup">
+        <div class="terminal-bar"><span>tunnitup · ~/projects/acme-store</span><span><button type="button" class="danger js-toggle-run">■ stop</button></span></div>
+        <div class="statusline"><span><i class="status-dot"></i><strong class="js-state">LIVE</strong></span><span class="public-url">https://acme.ngrok.app</span><span><span class="key">provider</span> ngrok</span><span><span class="key">uptime</span> 08:42</span></div>
+        <div class="dashboard">
+          <section class="pane">
+            <div class="pane-title"><span>Routes 3/3 healthy</span><button type="button">a add</button></div>
+            <div class="route-row selected"><span class="route-path">/</span><span>localhost:3000</span><span class="healthy">●</span></div>
+            <div class="route-row"><span class="route-path">/api</span><span>localhost:8000</span><span class="healthy">●</span></div>
+            <div class="route-row"><span class="route-path">/hooks</span><span>localhost:4000</span><span class="healthy">●</span></div>
+          </section>
+          <section class="pane">
+            <div class="pane-title"><span>Recent traffic</span><span>12 req/min</span></div>
+            <div class="traffic-head"><span>time</span><span>method</span><span>path</span><span>code</span><span>latency</span></div>
+            <div class="request-row"><span>14:06:18</span><span class="method">GET</span><span>/api/users</span><span class="code-ok">200</span><span>43ms</span></div>
+            <div class="request-row"><span>14:06:14</span><span class="method">POST</span><span>/hooks/stripe</span><span class="code-ok">204</span><span>81ms</span></div>
+            <div class="request-row"><span>14:06:02</span><span class="method">GET</span><span>/assets/app.js</span><span class="code-ok">200</span><span>12ms</span></div>
+            <div class="request-row"><span>14:05:57</span><span class="method">GET</span><span>/api/orders/42</span><span class="code-warn">404</span><span>31ms</span></div>
+            <div class="request-row"><span>14:05:51</span><span class="method">GET</span><span>/</span><span class="code-ok">200</span><span>18ms</span></div>
+          </section>
+        </div>
+        <div class="footer-help"><span class="key">↑↓</span> route&nbsp;&nbsp; <span class="key">enter</span> inspect&nbsp;&nbsp; <span class="key">a</span> add&nbsp;&nbsp; <span class="key">e</span> edit&nbsp;&nbsp; <span class="key">c</span> copy URL&nbsp;&nbsp; <span class="key">?</span> help</div>
+      </div>
+    </section>
+
+    <section class="concept" data-panel="routes">
+      <div class="concept-head">
+        <div><h2>B · Route workspace</h2><p>Routes are the product. The main view makes path precedence, upstream health, and configuration changes explicit.</p></div>
+        <p class="tradeoff"><strong>Best for learning and control.</strong> It teaches the abstraction well, but feels more like infrastructure tooling during everyday use.</p>
+      </div>
+      <div class="terminal" aria-label="Route workspace TUI mockup">
+        <div class="terminal-bar"><span>tunnitup · routes · tunnitup.toml</span><span><button type="button">v validate</button> <button type="button" class="primary">r run</button></span></div>
+        <div class="route-workspace">
+          <div class="statusline"><span><i class="status-dot"></i>Configuration valid</span><span><span class="key">domain</span> acme.ngrok.app</span><span><span class="key">bind</span> 127.0.0.1:8080</span></div>
+          <div>
+            <div class="route-table-head"><span>#</span><span>PUBLIC PATH</span><span>LOCAL SERVICE</span><span>HEALTH</span><span>TRAFFIC</span></div>
+            <div class="route-table-row"><span class="number">01</span><span>/hooks</span><span>http://localhost:4000</span><span class="healthy">healthy</span><span>3/min</span></div>
+            <div class="route-table-row selected"><span class="number">02</span><span>/api</span><span>http://localhost:8000</span><span class="healthy">healthy</span><span>7/min</span></div>
+            <div class="route-table-row"><span class="number">03</span><span>/</span><span>http://localhost:3000</span><span class="healthy">healthy</span><span>2/min</span></div>
+          </div>
+          <div class="route-detail">
+            <div class="detail-block"><small>PUBLIC ADDRESS</small>https://acme.ngrok.app/api</div>
+            <div class="detail-block"><small>FORWARDS TO</small>http://localhost:8000</div>
+            <div class="detail-block"><small>PATH BEHAVIOR</small>Keep <code>/api</code> prefix</div>
+            <div class="detail-block"><small>LAST CHECK</small><span class="healthy">200 OK · 7s ago</span></div>
+            <div class="detail-actions"><button type="button">e edit route</button><button type="button">x remove</button><button type="button">o open upstream</button></div>
+          </div>
+        </div>
+        <div class="footer-help"><span class="key">j/k</span> move&nbsp;&nbsp; <span class="key">a</span> add route&nbsp;&nbsp; <span class="key">e</span> edit&nbsp;&nbsp; <span class="key">r</span> run&nbsp;&nbsp; <span class="key">q</span> quit</div>
+      </div>
+    </section>
+
+    <section class="concept" data-panel="guided">
+      <div class="concept-head">
+        <div><h2>C · Guided launch</h2><p>A first-run flow that probes only the ports the user provides, proposes editable routes, checks ngrok, and previews exactly what becomes public.</p></div>
+        <p class="tradeoff"><strong>Best onboarding.</strong> It removes blank-page setup, but should hand off to a compact running view instead of becoming the permanent shell.</p>
+      </div>
+      <div class="terminal" aria-label="Guided launch TUI mockup">
+        <div class="terminal-bar"><span>tunnitup · new project</span><span class="js-step-count">Step 1 of 4</span></div>
+        <div class="setup">
+          <aside class="steps">
+            <div class="step current" data-guide-step="1">1 <span>Ports</span></div>
+            <div class="step" data-guide-step="2">2 <span>Paths</span></div>
+            <div class="step" data-guide-step="3">3 <span>Preview</span></div>
+            <div class="step">4 <span>Launch</span></div>
+          </aside>
+          <section class="setup-main">
+            <div class="setup-stage active" data-guide-stage="1">
+              <h3>Which ports are your services using?</h3>
+              <p>We only inspect the localhost ports you enter. Nothing is exposed during this check.</p>
+              <label class="field-label" for="ports-input">Ports, separated by commas</label>
+              <input id="ports-input" type="text" inputmode="numeric" value="3000, 8000, 4000" aria-describedby="ports-example">
+              <div class="port-example" id="ports-example">Example: 3000, 8000, 4000</div>
+              <div class="setup-actions"><button type="button">esc cancel</button><button type="button" class="primary js-probe">enter probe ports →</button></div>
+            </div>
+
+            <div class="setup-stage" data-guide-stage="2">
+              <h3>We found three HTTP services</h3>
+              <p>These paths are conservative suggestions, not guesses from an AI. Edit any of them before continuing.</p>
+              <div class="detect-box js-detected-list">
+                <div class="detect-row"><span><strong>localhost:3000</strong><br><span class="suggested">HTML · Next.js</span></span><span>Frontend-like service</span><label><span class="field-label">Public path</span><input class="js-path" data-port="3000" type="text" value="/"></label></div>
+                <div class="detect-row"><span><strong>localhost:8000</strong><br><span class="suggested">OpenAPI detected</span></span><span>API-like service</span><label><span class="field-label">Public path</span><input class="js-path" data-port="8000" type="text" value="/api"></label></div>
+                <div class="detect-row"><span><strong>localhost:4000</strong><br><span class="suggested">Unknown HTTP</span></span><span>Generic service</span><label><span class="field-label">Public path</span><input class="js-path" data-port="4000" type="text" value="/service-4000"></label></div>
+              </div>
+              <div class="setup-actions"><button type="button" class="js-guide-back">esc back</button><button type="button" class="primary js-preview">enter preview routes →</button></div>
+            </div>
+
+            <div class="setup-stage" data-guide-stage="3">
+              <h3>Review what will become public</h3>
+              <p>The tunnel is still stopped. Launching saves these routes and opens the command center.</p>
+              <div class="detect-box js-preview-list">
+                <div class="preview-row"><span class="public-url">https://acme.ngrok.app/</span><span>→</span><span>localhost:3000</span></div>
+                <div class="preview-row"><span class="public-url">https://acme.ngrok.app/api</span><span>→</span><span>localhost:8000</span></div>
+                <div class="preview-row"><span class="public-url">https://acme.ngrok.app/service-4000</span><span>→</span><span>localhost:4000</span></div>
+              </div>
+              <div class="setup-actions"><button type="button" class="js-guide-back">esc back</button><button type="button" class="primary js-launch">enter launch →</button></div>
+            </div>
+          </section>
+        </div>
+        <div class="footer-help">Nothing is public until the final confirmation. Tunnitup probes only the ports you provide.</div>
+      </div>
+    </section>
+
+    <section class="recommendation">
+      <div><p class="eyebrow">Chosen direction</p><h2>C for first run, A thereafter</h2><p>Ask for ports, probe only those services, and offer editable path suggestions. After the user confirms the public mapping, launch directly into the command center. Borrow B’s route detail screen only for editing.</p></div>
+      <div><p class="eyebrow">First implementation slice</p><ol><li>Port entry and HTTP probing.</li><li>Editable path suggestions.</li><li>Public mapping preview.</li><li>Launch/stop and public URL.</li><li>Route health and recent requests.</li></ol></div>
+    </section>
+  </main>
+
+  <script>
+    const tabs = [...document.querySelectorAll('[data-concept]')];
+    const panels = [...document.querySelectorAll('[data-panel]')];
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.concept;
+        tabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+        panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.panel === target));
+      });
+    });
+
+    document.querySelectorAll('.route-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        document.querySelectorAll('.route-row').forEach((item) => item.classList.remove('selected'));
+        row.classList.add('selected');
+      });
+    });
+
+    document.querySelectorAll('.js-toggle-run').forEach((button) => {
+      button.addEventListener('click', () => {
+        const state = document.querySelector('.js-state');
+        const running = state.textContent === 'LIVE';
+        state.textContent = running ? 'STOPPED' : 'LIVE';
+        button.textContent = running ? '▶ start' : '■ stop';
+        button.classList.toggle('danger', !running);
+        button.classList.toggle('primary', running);
+      });
+    });
+
+    const showGuideStage = (stageNumber) => {
+      document.querySelectorAll('[data-guide-stage]').forEach((stage) => {
+        stage.classList.toggle('active', stage.dataset.guideStage === String(stageNumber));
+      });
+      document.querySelectorAll('[data-guide-step]').forEach((step) => {
+        const number = Number(step.dataset.guideStep);
+        step.classList.toggle('current', number === stageNumber);
+        step.classList.toggle('done', number < stageNumber);
+      });
+      document.querySelector('.js-step-count').textContent = `Step ${stageNumber} of 4`;
+    };
+
+    const serviceHint = (port) => {
+      if (port === '3000') return { evidence: 'HTML · Next.js', kind: 'Frontend-like service', path: '/' };
+      if (port === '8000') return { evidence: 'OpenAPI detected', kind: 'API-like service', path: '/api' };
+      return { evidence: 'Unknown HTTP', kind: 'Generic service', path: `/service-${port}` };
+    };
+
+    document.querySelector('.js-probe').addEventListener('click', () => {
+      const ports = [...new Set(document.querySelector('#ports-input').value.split(',')
+        .map((port) => port.trim())
+        .filter((port) => /^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535))];
+      if (!ports.length) return;
+
+      document.querySelector('.js-detected-list').innerHTML = ports.map((port) => {
+        const hint = serviceHint(port);
+        return `<div class="detect-row"><span><strong>localhost:${port}</strong><br><span class="suggested">${hint.evidence}</span></span><span>${hint.kind}</span><label><span class="field-label">Public path</span><input class="js-path" data-port="${port}" type="text" value="${hint.path}"></label></div>`;
+      }).join('');
+      showGuideStage(2);
+    });
+    document.querySelectorAll('.js-guide-back').forEach((button) => {
+      button.addEventListener('click', () => {
+        const current = Number(document.querySelector('[data-guide-stage].active').dataset.guideStage);
+        showGuideStage(Math.max(1, current - 1));
+      });
+    });
+
+    document.querySelector('.js-preview').addEventListener('click', () => {
+      const routes = [...document.querySelectorAll('.js-path')].map((input) => ({
+        path: input.value.trim() || '/',
+        port: input.dataset.port,
+      }));
+      const preview = document.querySelector('.js-preview-list');
+      preview.innerHTML = routes.map((route) => {
+        const normalized = route.path === '/' ? '/' : `/${route.path.replace(/^\/+/, '')}`;
+        return `<div class="preview-row"><span class="public-url">https://acme.ngrok.app${normalized}</span><span>→</span><span>localhost:${route.port}</span></div>`;
+      }).join('');
+      showGuideStage(3);
+    });
+
+    document.querySelector('.js-launch').addEventListener('click', () => {
+      const commandTab = document.querySelector('[data-concept="command"]');
+      commandTab.click();
+      document.querySelector('.js-state').textContent = 'LIVE';
+    });
+  </script>
+</body>
+</html>
