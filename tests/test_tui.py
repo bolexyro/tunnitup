@@ -169,13 +169,17 @@ async def test_command_center_animates_the_starting_state() -> None:
         screen = app.screen
         screen._starting_frame = 0
         screen._refresh_runtime_state()
-        first = str(screen.query_one("#runtime-state", Static).render())
+        first_render = screen.query_one("#runtime-state", Static).render()
+        first = str(first_render)
+        first_styles = tuple(str(span.style) for span in first_render.spans)
         screen._refresh_runtime_state()
-        second = str(screen.query_one("#runtime-state", Static).render())
+        second_render = screen.query_one("#runtime-state", Static).render()
+        second_styles = tuple(str(span.style) for span in second_render.spans)
 
         assert "STARTING" in first
-        assert "●" in first
-        assert first != second
+        assert first.count("•") == 14
+        assert "\n" in first
+        assert first_styles != second_styles
 
 
 def test_command_center_colors_http_methods_and_status_classes() -> None:
@@ -279,3 +283,28 @@ async def test_new_non_root_route_strips_its_public_prefix_by_default() -> None:
         assert route is not None
         assert route.strip_prefix is True
         assert str(route.target_url("/astropay-api/docs")) == "http://localhost:3009/docs"
+
+
+async def test_ctrl_q_stops_the_runtime_before_exiting(monkeypatch: Any) -> None:
+    stopped = asyncio.Event()
+
+    async def fake_run(*args: Any, **kwargs: Any) -> None:
+        kwargs["on_ready"](Tunnel("fake", "https://public.test", "http://localhost:8080"))
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr("tunnitup.tui.create_provider", lambda _: object())
+    monkeypatch.setattr("tunnitup.tui.run_proxy_with_tunnel", fake_run)
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        app.start_stack()
+        await pilot.pause(0.05)
+        assert app.runtime_state == "online"
+
+        await pilot.press("ctrl+q")
+        await asyncio.wait_for(stopped.wait(), timeout=1)
+
+    assert app.runtime_state == "stopped"

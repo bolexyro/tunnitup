@@ -255,7 +255,8 @@ class CommandCenterScreen(TunnitupScreen):
             "[bold #9fc8ef]↑↓[/] navigate    [bold #9fc8ef]←→[/] routes/traffic    "
             "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
             "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]x[/] clear    "
-            "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]?[/] help",
+            "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]ctrl+q[/] quit    "
+            "[bold #9fc8ef]?[/] help",
             id="keybar",
         )
 
@@ -371,7 +372,7 @@ class CommandCenterScreen(TunnitupScreen):
     def action_help(self) -> None:
         self.notify(
             "↑↓ navigate · ←→ switch pane · A add · E edit · C copy URL · "
-            "X clear traffic · S start/stop · Q quit",
+            "X clear traffic · S start/stop · Q / Ctrl+Q quit",
             title="Keyboard controls",
             timeout=3,
         )
@@ -429,13 +430,32 @@ class CommandCenterScreen(TunnitupScreen):
     def _refresh_runtime_state(self) -> None:
         state = self.tunnitup.runtime_state.upper()
         if state == "STARTING":
-            matrix = ("●·····", "·●····", "··●···", "···●··", "····●·", "·····●")
-            phase = self._starting_frame % len(matrix)
+            rows, columns = 2, 7
+            path = (
+                (0, 0),
+                (0, 1),
+                (1, 1),
+                (1, 2),
+                (1, 3),
+                (0, 3),
+                (0, 4),
+                (0, 5),
+                (1, 5),
+                (1, 6),
+                (0, 6),
+            )
+            phase = self._starting_frame % len(path)
+            trail = {
+                path[(phase - offset) % len(path)]: color
+                for offset, color in enumerate(("#5ac8fa", "#438fd0", "#3674aa"))
+            }
             display = Text()
-            for dot in matrix[phase]:
-                color = "#5ac8fa" if dot == "●" else "#285b88"
-                display.append(dot, style=f"bold {color}")
-            display.append(" STARTING", style="bold #4a9be8")
+            for row in range(rows):
+                for column in range(columns):
+                    display.append("• ", style=f"bold {trail.get((row, column), '#244b70')}")
+                if row == 0:
+                    display.append("STARTING", style="bold #4a9be8")
+                    display.append("\n")
             self._starting_frame += 1
         else:
             color = {
@@ -670,6 +690,7 @@ class CommandCenterScreen(TunnitupScreen):
 
 
 class TunnitupApp(App[None]):
+    BINDINGS = [Binding("ctrl+q", "quit_cleanly", show=False, priority=True)]
     TITLE = "Tunnitup"
     SUB_TITLE = "one domain, many local services"
     CSS = """
@@ -810,7 +831,7 @@ class TunnitupApp(App[None]):
     }
 
     #runtime-state {
-        width: 18;
+        width: 25;
         text-overflow: ellipsis;
     }
 
@@ -966,6 +987,10 @@ class TunnitupApp(App[None]):
         if self.runtime is None:
             self.runtime = TuiRuntime(routes=RouteTable([]))
         self.push_screen(CommandCenterScreen())
+
+    def action_quit_cleanly(self) -> None:
+        self.stop_stack()
+        self.exit()
 
     def start_stack(self) -> None:
         if self.runtime is None or self.runtime_state in {"starting", "online"}:
