@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, OptionList, Static
 
 from tunnitup.discovery import ServiceProbe
 from tunnitup.providers.base import Tunnel
@@ -58,14 +58,19 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         await pilot.pause()
 
         assert isinstance(app.screen, CommandCenterScreen)
-        assert app.screen.query_one("#routes-table", DataTable).row_count == 1
+        route_list = app.screen.query_one("#routes-list", OptionList)
+        assert route_list.option_count == 1
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
         assert "STOPPED" in str(app.screen.query_one("#runtime-state", Static).render())
-        assert app.screen.query_one("#command-topbar", Horizontal).region.height == 4
-        assert app.screen.query_one("#live-strip", Horizontal).region.height == 3
-        assert not app.screen.query_one("#routes-table", DataTable).show_header
+        topbar = app.screen.query_one("#command-topbar", Horizontal)
+        assert topbar.region.height == 3
+        assert topbar.region.width == 120
+        assert app.screen.query_one("#live-strip", Horizontal).region.height == 2
+        assert not app.screen.query("#add-route")
         assert "enter" in str(app.screen.query_one("#keybar", Static).render())
-        routes_width = app.screen.query_one("#routes-panel", Vertical).region.width
+        routes_panel = app.screen.query_one("#routes-panel", Vertical)
+        routes_width = routes_panel.region.width
+        assert route_list.region.width >= routes_width - 1
         requests_width = app.screen.query_one("#requests-panel", Vertical).region.width
         assert routes_width < requests_width
         assert 0.32 <= routes_width / (routes_width + requests_width) <= 0.40

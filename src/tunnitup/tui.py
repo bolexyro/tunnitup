@@ -8,13 +8,15 @@ from pathlib import Path
 from time import monotonic
 from typing import cast
 
+from rich.table import Table
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Input, Label, Static
+from textual.widgets import Button, DataTable, Footer, Input, Label, OptionList, Static
+from textual.widgets.option_list import Option
 from textual.worker import Worker
 
 from tunnitup.config import TunnelSettings
@@ -277,10 +279,7 @@ class CommandCenterScreen(TunnitupScreen):
             with Vertical(id="routes-panel", classes="panel"):
                 with Horizontal(classes="pane-heading"):
                     yield Static("", id="route-heading")
-                    yield Button("a  add", id="add-route")
-                yield DataTable(
-                    id="routes-table", cursor_type="row", show_header=False, cell_padding=0
-                )
+                yield OptionList(id="routes-list", compact=True)
             with Vertical(id="requests-panel", classes="panel"):
                 with Horizontal(classes="pane-heading"):
                     yield Static("RECENT TRAFFIC", id="traffic-heading")
@@ -289,7 +288,7 @@ class CommandCenterScreen(TunnitupScreen):
                     id="requests-table",
                     cursor_type="row",
                     show_cursor=False,
-                    header_height=2,
+                    header_height=1,
                 )
         yield Static(
             "[bold #9fc8ef]↑↓[/] route    [bold #9fc8ef]enter[/] inspect    "
@@ -299,25 +298,27 @@ class CommandCenterScreen(TunnitupScreen):
         )
 
     def on_mount(self) -> None:
-        routes = self.query_one("#routes-table", DataTable)
-        routes.add_column("Path", width=12)
-        routes.add_column("Upstream", width=30)
-        routes.add_column("Health", width=2)
         requests = self.query_one("#requests-table", DataTable)
         requests.add_column("Time", width=9)
         requests.add_column("Method", width=8)
-        requests.add_column("Path", width=32)
+        self._traffic_path_column = requests.add_column("Path", width=32)
         requests.add_column("Code", width=8)
         requests.add_column("Latency", width=10)
         self.refresh_dashboard()
+        self.call_after_refresh(self._resize_traffic_columns)
         self.set_interval(1, self.refresh_dashboard)
         self.observe()
+
+    def on_resize(self, _: events.Resize) -> None:
+        self.call_after_refresh(self._resize_traffic_columns)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "toggle":
             self.action_toggle()
-        elif event.button.id == "add-route":
-            self.action_add_route()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "routes-list":
+            self.action_inspect_route()
 
     def action_toggle(self) -> None:
         if self.tunnitup.runtime_state in {"starting", "online"}:
@@ -382,10 +383,10 @@ class CommandCenterScreen(TunnitupScreen):
 
     def _selected_route(self) -> Route | None:
         runtime = self.tunnitup.runtime
-        table = self.query_one("#routes-table", DataTable)
-        if runtime is None or table.row_count == 0:
+        route_list = self.query_one("#routes-list", OptionList)
+        if runtime is None or route_list.highlighted is None:
             return None
-        path = str(table.get_row_at(table.cursor_row)[0])
+        path = route_list.get_option_at_index(route_list.highlighted).id
         return next((route for route in runtime.routes.routes if route.path == path), None)
 
     def _add_route(self, route: Route | None) -> None:
@@ -450,9 +451,11 @@ class CommandCenterScreen(TunnitupScreen):
         error_banner.display = self.tunnitup.runtime_error is not None
 
         health = {item.route_path: item for item in self.tunnitup.observations.health}
-        route_table = self.query_one("#routes-table", DataTable)
-        route_table.clear()
-        for route in sorted(runtime.routes.routes, key=lambda item: item.path):
+        route_list = self.query_one("#routes-list", OptionList)
+        selected = self._selected_route()
+        route_list.clear_options()
+        sorted_routes = sorted(runtime.routes.routes, key=lambda item: item.path)
+        for route in sorted_routes:
             result = health.get(route.path)
             if result is None:
                 state_text = Text("●", style="#5d7390")
@@ -460,11 +463,15 @@ class CommandCenterScreen(TunnitupScreen):
                 state_text = Text("●", style="#5ac8fa")
             else:
                 state_text = Text("●", style="#ef8d84")
-            route_table.add_row(
-                route.path,
-                self._display_upstream(route),
-                state_text,
-                height=3,
+            route_list.add_option(
+                Option(self._route_row(route, state_text), id=route.path)
+            )
+        route_paths = [route.path for route in sorted_routes]
+        if route_paths:
+            route_list.highlighted = (
+                route_paths.index(selected.path)
+                if selected is not None and selected.path in route_paths
+                else 0
             )
         healthy_count = sum(item.healthy for item in health.values())
         self.query_one("#route-heading", Static).update(
@@ -480,11 +487,34 @@ class CommandCenterScreen(TunnitupScreen):
                 event.path,
                 str(event.status),
                 f"{event.duration_ms:.0f}ms",
-                height=2,
+                height=1,
             )
         cutoff = datetime.now(UTC) - timedelta(minutes=1)
         rate = sum(event.timestamp >= cutoff for event in self.tunnitup.observations.requests)
         self.query_one("#request-rate", Static).update(f"{rate} REQ/MIN")
+
+    def _resize_traffic_columns(self) -> None:
+        table = self.query_one("#requests-table", DataTable)
+        fixed_columns = 9 + 8 + 8 + 10
+        cell_padding = table.cell_padding * 2 * 5
+        path_width = max(24, table.size.width - fixed_columns - cell_padding - 1)
+        column = table.columns[self._traffic_path_column]
+        if column.width != path_width:
+            column.width = path_width
+            table.refresh(layout=True)
+
+    @classmethod
+    def _route_row(cls, route: Route, health: Text) -> Table:
+        row = Table.grid(expand=True, padding=(0, 1))
+        row.add_column(width=12, no_wrap=True)
+        row.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
+        row.add_column(width=2, justify="right")
+        row.add_row(
+            Text(route.path, style="bold"),
+            Text(cls._display_upstream(route)),
+            health,
+        )
+        return row
 
     def _project_label(self) -> str:
         source = self.tunnitup.runtime.source if self.tunnitup.runtime else None
@@ -647,12 +677,8 @@ class TunnitupApp(App[None]):
         border-bottom: solid #27394e;
     }
 
-    CommandCenterScreen {
-        border: solid #34465c;
-    }
-
     #command-topbar {
-        height: 4;
+        height: 3;
         padding: 0 1;
         background: #1d2b3b;
         border-bottom: solid #34465c;
@@ -674,7 +700,7 @@ class TunnitupApp(App[None]):
     }
 
     #live-strip {
-        height: 3;
+        height: 2;
         padding: 0 1;
         background: #101721;
         border-bottom: solid #34465c;
@@ -715,14 +741,13 @@ class TunnitupApp(App[None]):
 
     .panel {
         padding: 0;
-        border-right: solid #34465c;
     }
 
-    #routes-panel { width: 36%; }
-    #requests-panel { width: 64%; }
+    #routes-panel { width: 34%; border-right: solid #34465c; }
+    #requests-panel { width: 66%; }
 
     .pane-heading {
-        height: 3;
+        height: 2;
         padding: 0 1;
         background: #101721;
         color: #9fc0e5;
@@ -741,13 +766,25 @@ class TunnitupApp(App[None]):
         content-align: right middle;
     }
 
-    #add-route {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        margin: 0;
+    #routes-list {
+        height: 1fr;
+        padding: 0;
         background: #171f2b;
-        border: solid #5d7390;
+        color: #dce7f2;
+        scrollbar-size: 1 1;
+    }
+
+    #routes-list > .option-list--option {
+        padding: 0;
+    }
+
+    #routes-list > .option-list--option-highlighted {
+        background: #1863a9;
+        color: #ffffff;
+    }
+
+    #routes-list > .option-list--option-hover {
+        background: #1d4f7c;
     }
 
     DataTable {
@@ -767,7 +804,7 @@ class TunnitupApp(App[None]):
     }
 
     #keybar {
-        height: 3;
+        height: 2;
         padding: 0 1;
         background: #1d2b3b;
         color: #9fc0e5;
