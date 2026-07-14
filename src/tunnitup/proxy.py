@@ -218,11 +218,31 @@ def _select_route(request: web.Request) -> Route | None:
         referring_url = URL(referer)
     except ValueError:
         return direct
-    if referring_url.authority != request.host:
+    if not _matches_request_authority(referring_url, request):
         return direct
 
     referred = routes.match(referring_url.path)
     return referred if referred is not None and referred.path != "/" else direct
+
+
+def _matches_request_authority(referring_url: URL, request: web.Request) -> bool:
+    authorities = [request.host]
+    if forwarded_host := request.headers.get("X-Forwarded-Host"):
+        authorities.append(forwarded_host.split(",", 1)[0].strip())
+
+    for authority in authorities:
+        try:
+            request_url = URL(f"//{authority}")
+        except ValueError:
+            continue
+        if (
+            referring_url.host is not None
+            and request_url.host is not None
+            and referring_url.host.casefold() == request_url.host.casefold()
+            and referring_url.explicit_port == request_url.explicit_port
+        ):
+            return True
+    return False
 
 
 def create_proxy_app(

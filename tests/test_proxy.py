@@ -270,7 +270,11 @@ async def test_root_relative_request_stays_with_same_origin_referring_route() ->
         ) as client:
             response = await client.get(
                 "/v3/api-docs/swagger-config",
-                headers={"Referer": str(client.make_url("/api/swagger-ui/index.html"))},
+                headers={
+                    "Host": "public.example.test",
+                    "X-Forwarded-Host": "public.example.test",
+                    "Referer": "https://public.example.test/api/swagger-ui/index.html",
+                },
             )
             payload = await response.json()
 
