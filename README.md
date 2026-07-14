@@ -44,9 +44,11 @@ Open the terminal interface with:
 tunnitup tui
 ```
 
-The TUI always opens the command center. Without a config file, press `A` to add the first upstream route; its public path defaults to `/`. Press `S` to open the launch dialog, choose the tunnel provider, optionally enter a static domain, and confirm the local proxy port. Tunnitup reports an actionable error when that port is already occupied.
+The TUI always opens the command center. Press `A` to create a named, reusable mapping from a public path to a local port or URL. Mappings are global rather than project-bound, so one catalog can contain services from several repositories. Press `S` to open the launch dialog, choose any subset of the saved mappings (including none), select the tunnel provider, optionally enter a static domain, and confirm the local proxy port. Tunnitup reports an actionable error when that port is already occupied.
 
-The command center displays the public URL, route health, active requests, and recent request outcomes. Press `S` or `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Q` to quit. Launching still requires an installed and authenticated ngrok CLI.
+Saved mappings live in the user's configuration directory (`%APPDATA%\tunnitup\mappings.toml` on Windows and `$XDG_CONFIG_HOME/tunnitup/mappings.toml` on Unix-like systems). Set `TUNNITUP_CONFIG_HOME` to override that location. Existing routes loaded from `tunnitup.toml` are imported into the catalog automatically.
+
+The command center displays the public URL, active route health, saved mappings, and recent request outcomes. Press `S` or `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Ctrl+C` to quit. Launching still requires an installed and authenticated ngrok CLI.
 
 ## Direct CLI usage
 

@@ -20,6 +20,12 @@ from textual.widgets.option_list import Option
 from textual.worker import Worker
 
 from tunnitup.config import ConfigurationError, TunnelSettings, normalize_tunnel_url
+from tunnitup.mappings import (
+    MappingStore,
+    MappingStoreError,
+    SavedMapping,
+    suggested_mapping_name,
+)
 from tunnitup.observability import ActivityEvent, ObservationStore, RequestEvent, RouteHealth
 from tunnitup.orchestration import run_proxy_with_tunnel
 from tunnitup.providers import ProviderError, Tunnel, create_provider
@@ -42,6 +48,7 @@ class LaunchOptions:
     provider: str
     public_url: str | None
     proxy_port: int
+    mapping_names: tuple[str, ...]
 
 
 class TunnitupScreen(Screen[None]):
@@ -51,18 +58,25 @@ class TunnitupScreen(Screen[None]):
 
 
 class LaunchScreen(ModalScreen[LaunchOptions | None]):
-    """Provider-aware launch settings shown immediately before startup."""
+    """Provider settings and saved mapping selection shown before startup."""
 
     BINDINGS = [Binding("escape", "cancel", show=False)]
 
-    def __init__(self, runtime: TuiRuntime) -> None:
+    def __init__(
+        self,
+        runtime: TuiRuntime,
+        mappings: tuple[SavedMapping, ...],
+        selected_names: tuple[str, ...],
+    ) -> None:
         super().__init__()
         self.runtime = runtime
+        self.mappings = mappings
+        self.selected_names = selected_names
 
     def compose(self) -> ComposeResult:
         with Vertical(id="launch-editor"):
             yield Static("START TUNNITUP", classes="modal-title")
-            yield Static("Choose how this local proxy becomes public.", classes="modal-copy")
+            yield Static("Choose a provider and the mappings to expose.", classes="modal-copy")
             yield Label("Tunnel provider", classes="field-label")
             yield Select(
                 [("ngrok", "ngrok")], value=self.runtime.tunnel.provider, id="launch-provider"
@@ -75,6 +89,21 @@ class LaunchScreen(ModalScreen[LaunchOptions | None]):
             )
             yield Label("Local proxy port", classes="field-label")
             yield Input(value=str(self.runtime.port), id="launch-port", type="integer")
+            yield Label("Saved mappings", classes="field-label")
+            with Vertical(id="launch-mappings"):
+                if not self.mappings:
+                    yield Static(
+                        "No saved mappings yet. Starting empty is allowed.",
+                        classes="modal-copy",
+                    )
+                for index, mapping in enumerate(self.mappings):
+                    route = mapping.route
+                    target = CommandCenterScreen._display_upstream(route)
+                    yield Checkbox(
+                        f"{mapping.name}   {route.path} → {target}",
+                        value=mapping.name in self.selected_names,
+                        id=f"launch-mapping-{index}",
+                    )
             yield Static("", id="launch-error", classes="error")
             with Horizontal(classes="actions"):
                 yield Button("Cancel", id="cancel")
@@ -105,46 +134,60 @@ class LaunchScreen(ModalScreen[LaunchOptions | None]):
             proxy_port = int(raw_port)
             if not 1 <= proxy_port <= 65535:
                 raise ValueError("proxy port must be between 1 and 65535")
+            mapping_names = tuple(
+                mapping.name
+                for index, mapping in enumerate(self.mappings)
+                if self.query_one(f"#launch-mapping-{index}", Checkbox).value
+            )
         except (ConfigurationError, ValueError) as exc:
             error.update(str(exc))
             return
-        self.dismiss(LaunchOptions(provider, public_url, proxy_port))
+        self.dismiss(LaunchOptions(provider, public_url, proxy_port, mapping_names))
 
 
-class RouteEditorScreen(ModalScreen[Route | None]):
-    """Small route editor shared by the add and edit commands."""
+class RouteEditorScreen(ModalScreen[SavedMapping | None]):
+    """Create or edit a reusable mapping."""
 
     BINDINGS = [Binding("escape", "cancel", show=False)]
 
-    def __init__(self, route: Route | None = None, *, default_path: str = "/api") -> None:
+    def __init__(
+        self,
+        mapping: SavedMapping | None = None,
+        *,
+        default_path: str = "/api",
+        suggested_name: str = "",
+    ) -> None:
         super().__init__()
-        self.route = route
+        self.mapping = mapping
         self.default_path = default_path
+        self.suggested_name = suggested_name
 
     def compose(self) -> ComposeResult:
+        route = self.mapping.route if self.mapping else None
         with Vertical(id="route-editor"):
-            yield Static("EDIT ROUTE" if self.route else "ADD ROUTE", classes="modal-title")
-            yield Label("Public path", classes="field-label")
-            yield Input(value=self.route.path if self.route else self.default_path, id="route-path")
-            yield Label("Local port or URL", classes="field-label")
+            yield Static("EDIT MAPPING" if route else "ADD MAPPING", classes="modal-title")
+            yield Label("Mapping name", classes="field-label")
             yield Input(
-                value=str(self.route.upstream) if self.route else "8000",
-                id="route-upstream",
+                value=self.mapping.name if self.mapping else self.suggested_name,
+                placeholder="my-api",
+                id="route-name",
             )
+            yield Label("Public path", classes="field-label")
+            yield Input(value=route.path if route else self.default_path, id="route-path")
+            yield Label("Local port or URL", classes="field-label")
+            yield Input(value=str(route.upstream) if route else "8000", id="route-upstream")
             yield Checkbox(
                 "Strip public path before forwarding",
-                value=(
-                    self.route.strip_prefix if self.route is not None else self.default_path != "/"
-                ),
+                value=(route.strip_prefix if route is not None else self.default_path != "/"),
                 id="route-strip-prefix",
             )
             yield Static("", id="route-error", classes="error")
             with Horizontal(classes="actions"):
                 yield Button("Cancel", id="cancel")
-                yield Button("Save route", id="save", variant="primary")
+                yield Button("Save mapping", id="save", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#route-path", Input).focus()
+        self.query_one("#route-name", Input).focus()
 
     def on_input_submitted(self, _: Input.Submitted) -> None:
         self.action_save()
@@ -165,11 +208,11 @@ class RouteEditorScreen(ModalScreen[Route | None]):
                 f"{self.query_one('#route-upstream', Input).value}",
                 strip_prefix=self.query_one("#route-strip-prefix", Checkbox).value,
             )
-        except RouteConfigurationError as exc:
+            mapping = SavedMapping(self.query_one("#route-name", Input).value, route)
+        except (MappingStoreError, RouteConfigurationError) as exc:
             self.query_one("#route-error", Static).update(str(exc))
             return
-        self.dismiss(route)
-
+        self.dismiss(mapping)
 
 class TrafficTable(DataTable):
     """A log table whose marker updates with the native cursor, without event lag."""
@@ -219,6 +262,7 @@ class CommandCenterScreen(TunnitupScreen):
         Binding("left", "focus_routes", show=False, priority=True),
         Binding("a", "add_route", show=False),
         Binding("e", "edit_route", show=False),
+        Binding("delete", "delete_mapping", show=False),
         Binding("c", "copy_url", show=False),
         Binding("x", "clear_requests", show=False),
         Binding("d", "error_details", show=False),
@@ -254,7 +298,7 @@ class CommandCenterScreen(TunnitupScreen):
         yield Static(
             "[bold #9fc8ef]↑↓[/] navigate    [bold #9fc8ef]←→[/] routes/traffic    "
             "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
-            "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]x[/] clear    "
+            "[bold #9fc8ef]del[/] remove    [bold #9fc8ef]c[/] copy URL    "
             "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]ctrl+c[/] quit    "
             "[bold #9fc8ef]?[/] help",
             id="keybar",
@@ -293,14 +337,15 @@ class CommandCenterScreen(TunnitupScreen):
             self.tunnitup.stop_stack()
         else:
             runtime = self.tunnitup.runtime
-            if runtime is None or not runtime.routes.routes:
-                self.notify(
-                    "Add at least one upstream route with A before starting.",
-                    severity="warning",
-                    timeout=2,
+            if runtime is not None:
+                self.app.push_screen(
+                    LaunchScreen(
+                        runtime,
+                        self.tunnitup.mappings,
+                        self.tunnitup.selected_mapping_names,
+                    ),
+                    self._launch,
                 )
-                return
-            self.app.push_screen(LaunchScreen(runtime), self._launch)
 
     def action_refresh(self) -> None:
         self.refresh_dashboard()
@@ -317,16 +362,26 @@ class CommandCenterScreen(TunnitupScreen):
     def action_add_route(self) -> None:
         if not self._routes_are_editable():
             return
-        runtime = self.tunnitup.runtime
-        default_path = "/" if runtime is None or not runtime.routes.routes else "/api"
-        self.app.push_screen(RouteEditorScreen(default_path=default_path), self._add_route)
+        default_path = "/" if not self.tunnitup.mappings else "/api"
+        suggested = self.tunnitup.suggest_name(default_path)
+        self.app.push_screen(
+            RouteEditorScreen(default_path=default_path, suggested_name=suggested),
+            self._add_route,
+        )
 
     def _launch(self, options: LaunchOptions | None) -> None:
         runtime = self.tunnitup.runtime
         if options is None or runtime is None:
             return
+        try:
+            routes = self.tunnitup.routes_for(options.mapping_names)
+        except RouteConfigurationError as exc:
+            self.notify(str(exc), severity="error", timeout=3)
+            return
+        self.tunnitup.selected_mapping_names = options.mapping_names
         self.tunnitup.runtime = replace(
             runtime,
+            routes=routes,
             port=options.proxy_port,
             tunnel=replace(
                 runtime.tunnel,
@@ -339,10 +394,32 @@ class CommandCenterScreen(TunnitupScreen):
     def action_edit_route(self) -> None:
         if not self._routes_are_editable():
             return
-        selected = self._selected_route()
+        selected = self._selected_mapping()
         if selected is not None:
             self.app.push_screen(RouteEditorScreen(selected), self._replace_route)
 
+    def action_delete_mapping(self) -> None:
+        if not self._routes_are_editable():
+            return
+        selected = self._selected_mapping()
+        if selected is None:
+            return
+        try:
+            self.tunnitup.delete_mapping(selected.name)
+            selected_names = tuple(
+                name
+                for name in self.tunnitup.selected_mapping_names
+                if name != selected.name
+            )
+            routes = self.tunnitup.routes_for(selected_names)
+        except (MappingStoreError, RouteConfigurationError) as exc:
+            self.notify(str(exc), severity="error", timeout=3)
+            return
+        self.tunnitup.selected_mapping_names = selected_names
+        if self.tunnitup.runtime is not None:
+            self.tunnitup.runtime = replace(self.tunnitup.runtime, routes=routes)
+        self.notify(f"Removed {selected.name}.", timeout=1.5)
+        self.refresh_dashboard()
     def action_focus_traffic(self) -> None:
         table = self.query_one("#requests-table", DataTable)
         if table.row_count:
@@ -371,8 +448,8 @@ class CommandCenterScreen(TunnitupScreen):
 
     def action_help(self) -> None:
         self.notify(
-            "↑↓ navigate · ←→ switch pane · A add · E edit · C copy URL · "
-            "X clear traffic · S start/stop · Q / Ctrl+C quit",
+            "↑↓ navigate · ←→ switch pane · A add · E edit · Delete remove · "
+            "C copy URL · X clear traffic · S start/stop · Q / Ctrl+C quit",
             title="Keyboard controls",
             timeout=3,
         )
@@ -387,36 +464,66 @@ class CommandCenterScreen(TunnitupScreen):
             return False
         return True
 
-    def _selected_route(self) -> Route | None:
-        runtime = self.tunnitup.runtime
+    def _selected_mapping(self) -> SavedMapping | None:
         route_list = self.query_one("#routes-list", OptionList)
-        if runtime is None or route_list.highlighted is None:
+        if route_list.highlighted is None:
             return None
-        path = route_list.get_option_at_index(route_list.highlighted).id
-        return next((route for route in runtime.routes.routes if route.path == path), None)
+        name = route_list.get_option_at_index(route_list.highlighted).id
+        return next(
+            (mapping for mapping in self.tunnitup.mappings if mapping.name == name),
+            None,
+        )
 
-    def _add_route(self, route: Route | None) -> None:
-        if route is None:
-            return
-        self._update_routes(route)
+    def _selected_route(self) -> Route | None:
+        mapping = self._selected_mapping()
+        return mapping.route if mapping is not None else None
 
-    def _replace_route(self, route: Route | None) -> None:
-        selected = self._selected_route()
-        if route is None or selected is None:
+    def _add_route(self, mapping: SavedMapping | None) -> None:
+        if mapping is None:
             return
-        self._update_routes(route, replacing=selected.path)
-
-    def _update_routes(self, route: Route, *, replacing: str | None = None) -> None:
-        runtime = self.tunnitup.runtime
-        if runtime is None:
-            return
-        routes = [item for item in runtime.routes.routes if item.path != replacing]
-        routes.append(route)
         try:
-            self.tunnitup.runtime = replace(runtime, routes=RouteTable(routes))
-        except RouteConfigurationError as exc:
+            self.tunnitup.add_mapping(mapping)
+        except MappingStoreError as exc:
             self.notify(str(exc), severity="error", timeout=3)
             return
+
+        selected = (*self.tunnitup.selected_mapping_names, mapping.name)
+        try:
+            routes = self.tunnitup.routes_for(selected)
+        except RouteConfigurationError:
+            self.notify(
+                "Mapping saved but left inactive because its public path is already active.",
+                severity="warning",
+                timeout=3,
+            )
+            self.refresh_dashboard()
+            return
+        self.tunnitup.selected_mapping_names = selected
+        if self.tunnitup.runtime is not None:
+            self.tunnitup.runtime = replace(self.tunnitup.runtime, routes=routes)
+        self.refresh_dashboard()
+
+    def _replace_route(self, mapping: SavedMapping | None) -> None:
+        selected = self._selected_mapping()
+        if mapping is None or selected is None:
+            return
+        selected_names = tuple(
+            mapping.name if name == selected.name else name
+            for name in self.tunnitup.selected_mapping_names
+        )
+        try:
+            candidate_mappings = tuple(
+                mapping if item.name == selected.name else item
+                for item in self.tunnitup.mappings
+            )
+            routes = self.tunnitup.routes_for(selected_names, mappings=candidate_mappings)
+            self.tunnitup.replace_mapping(selected.name, mapping)
+        except (MappingStoreError, RouteConfigurationError) as exc:
+            self.notify(str(exc), severity="error", timeout=3)
+            return
+        self.tunnitup.selected_mapping_names = selected_names
+        if self.tunnitup.runtime is not None:
+            self.tunnitup.runtime = replace(self.tunnitup.runtime, routes=routes)
         self.refresh_dashboard()
 
     @work(exclusive=True, exit_on_error=False)
@@ -471,23 +578,34 @@ class CommandCenterScreen(TunnitupScreen):
 
         health = {item.route_path: item for item in self.tunnitup.observations.health}
         route_list = self.query_one("#routes-list", OptionList)
-        selected = self._selected_route()
+        selected = self._selected_mapping()
         route_list.clear_options()
-        sorted_routes = sorted(runtime.routes.routes, key=lambda item: item.path)
-        for route in sorted_routes:
-            result = health.get(route.path)
-            state_text = self._health_indicator(result)
-            route_list.add_option(Option(self._route_row(route, state_text), id=route.path))
-        route_paths = [route.path for route in sorted_routes]
-        if route_paths:
+        sorted_mappings = sorted(
+            self.tunnitup.mappings,
+            key=lambda item: (item.route.path, item.name.casefold()),
+        )
+        active_names = set(self.tunnitup.selected_mapping_names)
+        active_paths = {route.path for route in runtime.routes.routes}
+        for mapping in sorted_mappings:
+            route = mapping.route
+            result = health.get(route.path) if mapping.name in active_names else None
+            state_text = self._health_indicator(result, active=mapping.name in active_names)
+            route_list.add_option(
+                Option(self._route_row(mapping, state_text), id=mapping.name)
+            )
+        mapping_names = [mapping.name for mapping in sorted_mappings]
+        if mapping_names:
             route_list.highlighted = (
-                route_paths.index(selected.path)
-                if selected is not None and selected.path in route_paths
+                mapping_names.index(selected.name)
+                if selected is not None and selected.name in mapping_names
                 else 0
             )
-        healthy_count = sum(item.healthy for item in health.values())
+        healthy_count = sum(
+            item.healthy for item in health.values() if item.route_path in active_paths
+        )
         self.query_one("#route-heading", Static).update(
             f"ROUTES  {healthy_count}/{len(runtime.routes.routes)} HEALTHY"
+            f"  ·  {len(self.tunnitup.mappings)} SAVED"
         )
 
         self._refresh_traffic()
@@ -574,13 +692,16 @@ class CommandCenterScreen(TunnitupScreen):
             table.refresh(layout=True)
 
     @classmethod
-    def _route_row(cls, route: Route, health: Text) -> Table:
+    def _route_row(cls, mapping: SavedMapping, health: Text) -> Table:
+        route = mapping.route
         row = Table.grid(expand=True, padding=(0, 1))
-        row.add_column(width=12, no_wrap=True)
+        row.add_column(width=13, no_wrap=True, overflow="ellipsis")
+        row.add_column(width=10, no_wrap=True, overflow="ellipsis")
         row.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         row.add_column(width=2, justify="right")
         row.add_row(
-            Text(route.path, style="bold"),
+            Text(mapping.name, style="bold"),
+            Text(route.path),
             Text(cls._display_upstream(route)),
             health,
         )
@@ -615,8 +736,8 @@ class CommandCenterScreen(TunnitupScreen):
         return Text(str(status), style=f"bold {color}")
 
     @staticmethod
-    def _health_indicator(result: RouteHealth | None) -> Text:
-        if result is None:
+    def _health_indicator(result: RouteHealth | None, *, active: bool = True) -> Text:
+        if not active or result is None:
             color = "#5d7390"
         elif result.healthy:
             color = "#5ac8fa"
@@ -950,21 +1071,110 @@ class TunnitupApp(App[None]):
         border: solid #5d7390;
         background: #172332;
     }
+
+    #launch-mappings {
+        height: auto;
+        max-height: 10;
+        margin-bottom: 1;
+        padding: 0 1;
+        border: solid #34465c;
+        background: #172332;
+        overflow-y: auto;
+    }
     """
 
     def __init__(
         self,
         runtime: TuiRuntime | None = None,
+        *,
+        mapping_store: MappingStore | None = None,
     ) -> None:
         super().__init__()
         self.runtime = runtime
+        self.mapping_store = mapping_store
         self.observations = ObservationStore()
         self.runtime_state = "stopped"
         self.runtime_error: str | None = None
         self.tunnel: Tunnel | None = None
         self.online_since: float | None = None
         self.runtime_worker: Worker[None] | None = None
+        self.mappings: tuple[SavedMapping, ...] = ()
+        self.selected_mapping_names: tuple[str, ...] = ()
+        self._load_mappings()
 
+    def _load_mappings(self) -> None:
+        try:
+            saved = self.mapping_store.load() if self.mapping_store is not None else ()
+        except MappingStoreError as exc:
+            self.runtime_error = str(exc)
+            saved = ()
+
+        mappings = list(saved)
+        selected: list[str] = []
+        imported = False
+        if self.runtime is not None:
+            for route in self.runtime.routes.routes:
+                existing = next((item for item in mappings if item.route == route), None)
+                if existing is None:
+                    existing = SavedMapping(
+                        suggested_mapping_name(route, tuple(mappings)),
+                        route,
+                    )
+                    mappings.append(existing)
+                    imported = True
+                selected.append(existing.name)
+        self.mappings = tuple(mappings)
+        self.selected_mapping_names = tuple(selected)
+        if imported and self.mapping_store is not None:
+            try:
+                self.mapping_store.save(self.mappings)
+            except MappingStoreError as exc:
+                self.runtime_error = str(exc)
+
+    def suggest_name(self, path: str) -> str:
+        return suggested_mapping_name(Route.parse(f"{path}=8000"), self.mappings)
+
+    def routes_for(
+        self,
+        names: tuple[str, ...],
+        *,
+        mappings: tuple[SavedMapping, ...] | None = None,
+    ) -> RouteTable:
+        catalog = mappings if mappings is not None else self.mappings
+        by_name = {mapping.name: mapping.route for mapping in catalog}
+        missing = [name for name in names if name not in by_name]
+        if missing:
+            raise MappingStoreError(f"saved mapping {missing[0]!r} no longer exists")
+        return RouteTable([by_name[name] for name in names])
+
+    def add_mapping(self, mapping: SavedMapping) -> None:
+        if any(item.name.casefold() == mapping.name.casefold() for item in self.mappings):
+            raise MappingStoreError(f"mapping name {mapping.name!r} already exists")
+        updated = (*self.mappings, mapping)
+        if self.mapping_store is not None:
+            self.mapping_store.save(updated)
+        self.mappings = updated
+
+    def replace_mapping(self, old_name: str, mapping: SavedMapping) -> None:
+        if any(
+            item.name.casefold() == mapping.name.casefold() and item.name != old_name
+            for item in self.mappings
+        ):
+            raise MappingStoreError(f"mapping name {mapping.name!r} already exists")
+        updated = tuple(
+            mapping if item.name == old_name else item for item in self.mappings
+        )
+        if self.mapping_store is not None:
+            self.mapping_store.save(updated)
+        self.mappings = updated
+
+    def delete_mapping(self, name: str) -> None:
+        updated = tuple(item for item in self.mappings if item.name != name)
+        if len(updated) == len(self.mappings):
+            raise MappingStoreError(f"mapping {name!r} no longer exists")
+        if self.mapping_store is not None:
+            self.mapping_store.save(updated)
+        self.mappings = updated
     def on_mount(self) -> None:
         if self.runtime is None:
             self.runtime = TuiRuntime(routes=RouteTable([]))

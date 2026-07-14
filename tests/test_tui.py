@@ -1,10 +1,12 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Checkbox, DataTable, Input, OptionList, Static
 
+from tunnitup.mappings import MappingStore, SavedMapping
 from tunnitup.observability import RequestEvent, RouteHealth
 from tunnitup.providers.base import Tunnel
 from tunnitup.routing import Route, RouteTable
@@ -303,3 +305,71 @@ async def test_ctrl_c_stops_the_runtime_before_exiting(monkeypatch: Any) -> None
         await asyncio.wait_for(stopped.wait(), timeout=1)
 
     assert app.runtime_state == "stopped"
+
+async def test_tui_imports_project_routes_into_global_mapping_store(tmp_path: Path) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    runtime = TuiRuntime(
+        routes=RouteTable(
+            [
+                Route.parse("/=3000"),
+                Route.parse("/api=8000", strip_prefix=True),
+            ]
+        )
+    )
+
+    app = TunnitupApp(runtime, mapping_store=store)
+
+    assert len(app.mappings) == 2
+    assert set(app.selected_mapping_names) == {mapping.name for mapping in app.mappings}
+    assert store.load() == app.mappings
+
+    reopened = TunnitupApp(mapping_store=store)
+    assert reopened.mappings == app.mappings
+    assert reopened.selected_mapping_names == ()
+
+
+async def test_launch_can_explicitly_select_no_saved_mappings(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    store.save((SavedMapping("frontend", Route.parse("/=3000")),))
+    observed_routes: list[RouteTable] = []
+
+    async def fake_run(routes: RouteTable, *args: Any, **kwargs: Any) -> None:
+        observed_routes.append(routes)
+        kwargs["on_ready"](Tunnel("fake", "https://public.test", "http://127.0.0.1:8080"))
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("tunnitup.tui.create_provider", lambda _: object())
+    monkeypatch.setattr("tunnitup.tui.run_proxy_with_tunnel", fake_run)
+    app = TunnitupApp(mapping_store=store)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, LaunchScreen)
+        assert app.screen.query_one("#launch-mapping-0", Checkbox).value is False
+
+        await pilot.click("#launch")
+        await pilot.pause(0.05)
+
+        assert app.runtime_state == "online"
+        assert observed_routes[0].routes == ()
+        app.stop_stack()
+        await pilot.pause(0.05)
+
+
+def test_app_deletes_mapping_from_persistent_catalog(tmp_path: Path) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    mappings = (
+        SavedMapping("frontend", Route.parse("/=3000")),
+        SavedMapping("api", Route.parse("/api=8000", strip_prefix=True)),
+    )
+    store.save(mappings)
+    app = TunnitupApp(mapping_store=store)
+
+    app.delete_mapping("frontend")
+
+    assert tuple(mapping.name for mapping in app.mappings) == ("api",)
+    assert store.load() == app.mappings

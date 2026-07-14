@@ -123,8 +123,6 @@ def _targets_listener(proxy_host: str, upstream_host: str) -> bool:
 
 def validate_proxy_routes(routes: RouteTable, host: str, port: int) -> None:
     """Reject upstreams that resolve back to Tunnitup's listening socket."""
-    if not routes.routes:
-        raise RouteConfigurationError("at least one route is required")
     for route in routes.routes:
         upstream_host = route.upstream.host
         if (

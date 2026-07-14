@@ -404,6 +404,7 @@ def tui_command(
     ] = None,
 ) -> None:
     """Open the guided setup or command-center terminal interface."""
+    from tunnitup.mappings import MappingStore
     from tunnitup.tui import TuiRuntime, TunnitupApp
 
     loaded: TunnitupConfig | None = None
@@ -424,7 +425,7 @@ def tui_command(
         if loaded is not None
         else None
     )
-    TunnitupApp(runtime).run()
+    TunnitupApp(runtime, mapping_store=MappingStore.default()).run()
 
 
 if __name__ == "__main__":
