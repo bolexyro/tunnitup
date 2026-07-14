@@ -430,32 +430,14 @@ class CommandCenterScreen(TunnitupScreen):
     def _refresh_runtime_state(self) -> None:
         state = self.tunnitup.runtime_state.upper()
         if state == "STARTING":
-            rows, columns = 2, 7
-            path = (
-                (0, 0),
-                (0, 1),
-                (1, 1),
-                (1, 2),
-                (1, 3),
-                (0, 3),
-                (0, 4),
-                (0, 5),
-                (1, 5),
-                (1, 6),
-                (0, 6),
-            )
-            phase = self._starting_frame % len(path)
-            trail = {
-                path[(phase - offset) % len(path)]: color
-                for offset, color in enumerate(("#5ac8fa", "#438fd0", "#3674aa"))
-            }
+            wave = ("⠁", "⠂", "⠄", "⡀", "⠄", "⠂")
+            phase = self._starting_frame % len(wave)
             display = Text()
-            for row in range(rows):
-                for column in range(columns):
-                    display.append("• ", style=f"bold {trail.get((row, column), '#244b70')}")
-                if row == 0:
-                    display.append("STARTING", style="bold #4a9be8")
-                    display.append("\n")
+            for index in range(7):
+                distance = (index - phase) % 7
+                color = "#5ac8fa" if distance == 0 else "#367fbe"
+                display.append(wave[(index + phase) % len(wave)], style=color)
+            display.append(" STARTING", style="bold #4a9be8")
             self._starting_frame += 1
         else:
             color = {
@@ -823,7 +805,7 @@ class TunnitupApp(App[None]):
     }
 
     #live-strip {
-        height: 3;
+        height: 2;
         padding: 0 1;
         background: #101721;
         border-bottom: solid #34465c;
@@ -831,8 +813,7 @@ class TunnitupApp(App[None]):
     }
 
     #runtime-state {
-        width: 25;
-        height: 2;
+        width: 18;
         text-overflow: ellipsis;
     }
 

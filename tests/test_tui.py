@@ -57,7 +57,7 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         topbar = app.screen.query_one("#command-topbar", Horizontal)
         assert topbar.region.height == 4
         assert topbar.region.width == 120
-        assert app.screen.query_one("#live-strip", Horizontal).region.height == 3
+        assert app.screen.query_one("#live-strip", Horizontal).region.height == 2
         assert not app.screen.query("#add-route")
         assert "start/stop" in str(app.screen.query_one("#keybar", Static).render())
         routes_panel = app.screen.query_one("#routes-panel", Vertical)
@@ -169,18 +169,12 @@ async def test_command_center_animates_the_starting_state() -> None:
         screen = app.screen
         screen._starting_frame = 0
         screen._refresh_runtime_state()
-        first_render = screen.query_one("#runtime-state", Static).render()
-        first = str(first_render)
-        first_styles = tuple(str(span.style) for span in first_render.spans)
+        first = str(screen.query_one("#runtime-state", Static).render())
         screen._refresh_runtime_state()
-        second_render = screen.query_one("#runtime-state", Static).render()
-        second_styles = tuple(str(span.style) for span in second_render.spans)
+        second = str(screen.query_one("#runtime-state", Static).render())
 
         assert "STARTING" in first
-        assert first.count("•") == 14
-        assert "\n" in first
-        assert screen.query_one("#runtime-state", Static).region.height == 2
-        assert first_styles != second_styles
+        assert first != second
 
 
 def test_command_center_colors_http_methods_and_status_classes() -> None:
