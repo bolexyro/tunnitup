@@ -44,9 +44,9 @@ Open the terminal interface with:
 tunnitup tui
 ```
 
-When `tunnitup.toml` exists, the TUI opens the command center with its configured routes. Without a config file, guided setup asks for localhost ports, probes only those ports, offers deterministic path suggestions, and lets you edit every path before previewing and launching. It does not scan arbitrary ports or modify project files.
+The TUI always opens the command center. Without a config file, press `A` to add the first upstream route; its public path defaults to `/`. Press `S` to open the launch dialog, choose the tunnel provider, optionally enter a static domain, and confirm the local proxy port. Tunnitup reports an actionable error when that port is already occupied.
 
-The command center displays the public URL, route health, active requests, and recent request outcomes. Press `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Q` to quit. Launching still requires an installed and authenticated ngrok CLI.
+The command center displays the public URL, route health, active requests, and recent request outcomes. Press `S` or `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Q` to quit. Launching still requires an installed and authenticated ngrok CLI.
 
 ## Direct CLI usage
 

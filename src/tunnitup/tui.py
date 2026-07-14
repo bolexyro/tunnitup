@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,22 +12,19 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Input, Label, OptionList, Static
+from textual.widgets import Button, DataTable, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from textual.worker import Worker
 
-from tunnitup.config import TunnelSettings
-from tunnitup.discovery import PortInputError, ServiceProbe, parse_ports, probe_ports
+from tunnitup.config import ConfigurationError, TunnelSettings, normalize_tunnel_url
 from tunnitup.observability import ActivityEvent, ObservationStore, RequestEvent, RouteHealth
 from tunnitup.orchestration import run_proxy_with_tunnel
 from tunnitup.providers import ProviderError, Tunnel, create_provider
 from tunnitup.proxy import ProxySettings
-from tunnitup.routing import Route, RouteConfigurationError, RouteTable, normalize_path
-
-ProbeFunction = Callable[[tuple[int, ...]], Awaitable[tuple[ServiceProbe, ...]]]
+from tunnitup.routing import Route, RouteConfigurationError, RouteTable
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,165 +37,78 @@ class TuiRuntime:
     source: Path | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LaunchOptions:
+    provider: str
+    public_url: str | None
+    proxy_port: int
+
+
 class TunnitupScreen(Screen[None]):
     @property
     def tunnitup(self) -> TunnitupApp:
         return cast("TunnitupApp", self.app)
 
 
-class PortsScreen(TunnitupScreen):
-    BINDINGS = [("escape", "app.quit", "Quit")]
+class LaunchScreen(ModalScreen[LaunchOptions | None]):
+    """Provider-aware launch settings shown immediately before startup."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    def __init__(self, runtime: TuiRuntime) -> None:
+        super().__init__()
+        self.runtime = runtime
 
     def compose(self) -> ComposeResult:
-        yield Static("TUNNITUP   one domain, many local services", classes="topbar")
-        with Vertical(id="setup-shell"):
-            yield Label("01 / PORTS", classes="step-label")
-            yield Static("Which ports are your services using?", classes="screen-title")
-            yield Static(
-                "Tunnitup will probe only these localhost ports. Nothing becomes public yet.",
-                classes="screen-copy",
+        with Vertical(id="launch-editor"):
+            yield Static("START TUNNITUP", classes="modal-title")
+            yield Static("Choose how this local proxy becomes public.", classes="modal-copy")
+            yield Label("Tunnel provider", classes="field-label")
+            yield Select(
+                [("ngrok", "ngrok")], value=self.runtime.tunnel.provider, id="launch-provider"
             )
+            yield Label("Static domain or URL (optional)", classes="field-label")
             yield Input(
-                value="3000, 8000",
-                placeholder="3000, 8000, 4000",
-                id="ports",
+                value=self.runtime.tunnel.url or "",
+                placeholder="my-domain.ngrok-free.app",
+                id="launch-url",
             )
-            yield Static("", id="ports-error", classes="error")
-            yield Button("Probe ports  →", id="probe", variant="primary")
-        yield Footer()
+            yield Label("Local proxy port", classes="field-label")
+            yield Input(value=str(self.runtime.port), id="launch-port", type="integer")
+            yield Static("", id="launch-error", classes="error")
+            with Horizontal(classes="actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Start", id="launch", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#ports", Input).focus()
-
-    def on_input_submitted(self, _: Input.Submitted) -> None:
-        self.action_probe()
+        self.query_one("#launch-url", Input).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "probe":
-            self.action_probe()
+        if event.button.id == "cancel":
+            self.action_cancel()
+        elif event.button.id == "launch":
+            self.action_launch()
 
-    def action_probe(self) -> None:
-        error = self.query_one("#ports-error", Static)
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_launch(self) -> None:
+        error = self.query_one("#launch-error", Static)
         try:
-            ports = parse_ports(self.query_one("#ports", Input).value)
-        except PortInputError as exc:
+            provider = str(self.query_one("#launch-provider", Select).value)
+            raw_url = self.query_one("#launch-url", Input).value.strip()
+            public_url = None
+            if raw_url:
+                candidate = raw_url if "://" in raw_url else f"https://{raw_url}"
+                public_url = normalize_tunnel_url(candidate)
+            raw_port = self.query_one("#launch-port", Input).value.strip()
+            proxy_port = int(raw_port)
+            if not 1 <= proxy_port <= 65535:
+                raise ValueError("proxy port must be between 1 and 65535")
+        except (ConfigurationError, ValueError) as exc:
             error.update(str(exc))
             return
-        error.update("")
-        self.query_one("#probe", Button).disabled = True
-        self.query_one("#probe", Button).label = "Probing…"
-        self.probe_services(ports)
-
-    @work(exclusive=True, exit_on_error=False)
-    async def probe_services(self, ports: tuple[int, ...]) -> None:
-        try:
-            probes = await self.tunnitup.probe_function(ports)
-        except Exception as exc:
-            self.query_one("#ports-error", Static).update(f"Could not probe services: {exc}")
-            self.query_one("#probe", Button).disabled = False
-            self.query_one("#probe", Button).label = "Probe ports  →"
-            return
-        await self.app.push_screen(PathsScreen(probes))
-
-
-class PathsScreen(TunnitupScreen):
-    BINDINGS = [("escape", "back", "Back")]
-
-    def __init__(self, probes: tuple[ServiceProbe, ...]) -> None:
-        super().__init__()
-        self.probes = probes
-
-    def compose(self) -> ComposeResult:
-        yield Static("TUNNITUP   one domain, many local services", classes="topbar")
-        with VerticalScroll(id="setup-shell"):
-            yield Label("02 / PATHS", classes="step-label")
-            yield Static("Edit the suggested public paths", classes="screen-title")
-            yield Static(
-                "Suggestions come from ordinary HTTP responses. You have the final say.",
-                classes="screen-copy",
-            )
-            for probe in self.probes:
-                state = probe.detail if probe.reachable else f"{probe.detail} · can still configure"
-                with Horizontal(classes="service-row"):
-                    yield Static(f"localhost:{probe.port}\n[dim]{state}[/dim]", classes="service")
-                    yield Input(
-                        value=probe.suggested_path,
-                        id=f"path-{probe.port}",
-                        classes="path-input",
-                    )
-            yield Static("", id="paths-error", classes="error")
-            with Horizontal(classes="actions"):
-                yield Button("←  Back", id="back")
-                yield Button("Preview routes  →", id="preview", variant="primary")
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
-            self.action_back()
-        elif event.button.id == "preview":
-            self.action_preview()
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-    def action_preview(self) -> None:
-        try:
-            routes = RouteTable(
-                [
-                    Route.parse(
-                        f"{normalize_path(self.query_one(f'#path-{probe.port}', Input).value)}="
-                        f"{probe.port}"
-                    )
-                    for probe in self.probes
-                ]
-            )
-        except RouteConfigurationError as exc:
-            self.query_one("#paths-error", Static).update(str(exc))
-            return
-        self.app.push_screen(PreviewScreen(routes))
-
-
-class PreviewScreen(TunnitupScreen):
-    BINDINGS = [("escape", "back", "Back")]
-
-    def __init__(self, routes: RouteTable) -> None:
-        super().__init__()
-        self.routes = routes
-
-    def compose(self) -> ComposeResult:
-        yield Static("TUNNITUP   one domain, many local services", classes="topbar")
-        with Vertical(id="setup-shell"):
-            yield Label("03 / PREVIEW", classes="step-label")
-            yield Static("Review what will become public", classes="screen-title")
-            yield Static(
-                "The tunnel is still stopped. Launching opens the command center.",
-                classes="screen-copy",
-            )
-            with Vertical(id="preview-list"):
-                for route in sorted(self.routes.routes, key=lambda item: item.path):
-                    yield Static(
-                        f"[bold #4a9be8]PUBLIC DOMAIN{route.path}[/]\n  →  {route.upstream}",
-                        classes="preview-row",
-                    )
-            with Horizontal(classes="actions"):
-                yield Button("←  Back", id="back")
-                yield Button("Launch Tunnitup  →", id="launch", variant="primary")
-        yield Footer()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
-            self.action_back()
-        elif event.button.id == "launch":
-            self.launch()
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-    @work(exclusive=True)
-    async def launch(self) -> None:
-        self.tunnitup.runtime = TuiRuntime(routes=self.routes)
-        await self.app.push_screen(CommandCenterScreen())
-        self.tunnitup.start_stack()
+        self.dismiss(LaunchOptions(provider, public_url, proxy_port))
 
 
 class RouteEditorScreen(ModalScreen[Route | None]):
@@ -207,15 +116,16 @@ class RouteEditorScreen(ModalScreen[Route | None]):
 
     BINDINGS = [Binding("escape", "cancel", show=False)]
 
-    def __init__(self, route: Route | None = None) -> None:
+    def __init__(self, route: Route | None = None, *, default_path: str = "/api") -> None:
         super().__init__()
         self.route = route
+        self.default_path = default_path
 
     def compose(self) -> ComposeResult:
         with Vertical(id="route-editor"):
             yield Static("EDIT ROUTE" if self.route else "ADD ROUTE", classes="modal-title")
             yield Label("Public path", classes="field-label")
-            yield Input(value=self.route.path if self.route else "/api", id="route-path")
+            yield Input(value=self.route.path if self.route else self.default_path, id="route-path")
             yield Label("Local port or URL", classes="field-label")
             yield Input(
                 value=str(self.route.upstream) if self.route else "8000",
@@ -366,9 +276,7 @@ class CommandCenterScreen(TunnitupScreen):
         if event.button.id == "toggle":
             self.action_toggle()
 
-    def on_option_list_option_highlighted(
-        self, event: OptionList.OptionHighlighted
-    ) -> None:
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "routes-list":
             self._refresh_traffic()
 
@@ -376,7 +284,15 @@ class CommandCenterScreen(TunnitupScreen):
         if self.tunnitup.runtime_state in {"starting", "online"}:
             self.tunnitup.stop_stack()
         else:
-            self.tunnitup.start_stack()
+            runtime = self.tunnitup.runtime
+            if runtime is None or not runtime.routes.routes:
+                self.notify(
+                    "Add at least one upstream route with A before starting.",
+                    severity="warning",
+                    timeout=2,
+                )
+                return
+            self.app.push_screen(LaunchScreen(runtime), self._launch)
 
     def action_refresh(self) -> None:
         self.refresh_dashboard()
@@ -393,7 +309,24 @@ class CommandCenterScreen(TunnitupScreen):
     def action_add_route(self) -> None:
         if not self._routes_are_editable():
             return
-        self.app.push_screen(RouteEditorScreen(), self._add_route)
+        runtime = self.tunnitup.runtime
+        default_path = "/" if runtime is None or not runtime.routes.routes else "/api"
+        self.app.push_screen(RouteEditorScreen(default_path=default_path), self._add_route)
+
+    def _launch(self, options: LaunchOptions | None) -> None:
+        runtime = self.tunnitup.runtime
+        if options is None or runtime is None:
+            return
+        self.tunnitup.runtime = replace(
+            runtime,
+            port=options.proxy_port,
+            tunnel=replace(
+                runtime.tunnel,
+                provider=options.provider,
+                url=options.public_url,
+            ),
+        )
+        self.tunnitup.start_stack()
 
     def action_edit_route(self) -> None:
         if not self._routes_are_editable():
@@ -489,13 +422,12 @@ class CommandCenterScreen(TunnitupScreen):
     def _refresh_runtime_state(self) -> None:
         state = self.tunnitup.runtime_state.upper()
         if state == "STARTING":
-            wave = ("⠁", "⠂", "⠄", "⡀", "⠄", "⠂")
-            phase = self._starting_frame % len(wave)
+            matrix = ("●·····", "·●····", "··●···", "···●··", "····●·", "·····●")
+            phase = self._starting_frame % len(matrix)
             display = Text()
-            for index in range(7):
-                distance = (index - phase) % 7
-                color = "#5ac8fa" if distance == 0 else "#367fbe"
-                display.append(wave[(index + phase) % len(wave)], style=color)
+            for dot in matrix[phase]:
+                color = "#5ac8fa" if dot == "●" else "#285b88"
+                display.append(dot, style=f"bold {color}")
             display.append(" STARTING", style="bold #4a9be8")
             self._starting_frame += 1
         else:
@@ -506,7 +438,6 @@ class CommandCenterScreen(TunnitupScreen):
             }.get(state, "#4a9be8")
             display = Text(f"■ {state}", style=f"bold {color}")
         self.query_one("#runtime-state", Static).update(display)
-
 
     def refresh_dashboard(self) -> None:
         runtime = self.tunnitup.runtime
@@ -520,9 +451,7 @@ class CommandCenterScreen(TunnitupScreen):
         )
         button = self.query_one("#toggle", Button)
         button.label = (
-            "■  stop"
-            if self.tunnitup.runtime_state in {"starting", "online"}
-            else "▶  start"
+            "■  stop" if self.tunnitup.runtime_state in {"starting", "online"} else "▶  start"
         )
         button.variant = (
             "error" if self.tunnitup.runtime_state in {"starting", "online"} else "primary"
@@ -539,9 +468,7 @@ class CommandCenterScreen(TunnitupScreen):
         for route in sorted_routes:
             result = health.get(route.path)
             state_text = self._health_indicator(result)
-            route_list.add_option(
-                Option(self._route_row(route, state_text), id=route.path)
-            )
+            route_list.add_option(Option(self._route_row(route, state_text), id=route.path))
         route_paths = [route.path for route in sorted_routes]
         if route_paths:
             route_list.highlighted = (
@@ -709,11 +636,7 @@ class CommandCenterScreen(TunnitupScreen):
 
     @staticmethod
     def _display_upstream(route: Route) -> str:
-        host = (
-            "localhost"
-            if route.upstream.host in {"127.0.0.1", "::1"}
-            else route.upstream.host
-        )
+        host = "localhost" if route.upstream.host in {"127.0.0.1", "::1"} else route.upstream.host
         port = f":{route.upstream.port}" if route.upstream.port else ""
         path = route.upstream.path.rstrip("/")
         return f"{host}{port}{path}"
@@ -984,12 +907,12 @@ class TunnitupApp(App[None]):
         content-align: left middle;
     }
 
-    RouteEditorScreen {
+    RouteEditorScreen, LaunchScreen {
         align: center middle;
         background: #000000 50%;
     }
 
-    #route-editor {
+    #route-editor, #launch-editor {
         width: 58;
         height: auto;
         padding: 1 2;
@@ -1006,17 +929,25 @@ class TunnitupApp(App[None]):
     .field-label {
         color: #9aa8ba;
     }
+
+    .modal-copy {
+        color: #9aa8ba;
+        margin-bottom: 1;
+    }
+
+    Select {
+        margin-bottom: 1;
+        border: solid #5d7390;
+        background: #172332;
+    }
     """
 
     def __init__(
         self,
         runtime: TuiRuntime | None = None,
-        *,
-        probe_function: ProbeFunction = probe_ports,
     ) -> None:
         super().__init__()
         self.runtime = runtime
-        self.probe_function = probe_function
         self.observations = ObservationStore()
         self.runtime_state = "stopped"
         self.runtime_error: str | None = None
@@ -1026,9 +957,8 @@ class TunnitupApp(App[None]):
 
     def on_mount(self) -> None:
         if self.runtime is None:
-            self.push_screen(PortsScreen())
-        else:
-            self.push_screen(CommandCenterScreen())
+            self.runtime = TuiRuntime(routes=RouteTable([]))
+        self.push_screen(CommandCenterScreen())
 
     def start_stack(self) -> None:
         if self.runtime is None or self.runtime_state in {"starting", "online"}:

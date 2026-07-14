@@ -10,6 +10,10 @@ from tunnitup.proxy import ProxySettings, create_proxy_app
 from tunnitup.routing import RouteTable, validate_proxy_routes
 
 
+class ProxyStartupError(OSError):
+    """Raised when the local reverse proxy cannot start listening."""
+
+
 def local_tunnel_url(host: str, port: int) -> str:
     if host in {"0.0.0.0", "::"}:
         host = "127.0.0.1" if host == "0.0.0.0" else "[::1]"
@@ -49,7 +53,15 @@ async def run_proxy_with_tunnel(
     try:
         await runner.setup()
         site = web.TCPSite(runner, host, port)
-        await site.start()
+        try:
+            await site.start()
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 10048 or exc.errno in {48, 98, 10048}:
+                raise ProxyStartupError(
+                    f"Port {port} is already in use. Stop the process using it or choose "
+                    "another proxy port."
+                ) from exc
+            raise ProxyStartupError(f"Could not listen on {host}:{port}: {exc}") from exc
         if health_monitor is not None:
             await health_monitor.start()
         tunnel = await provider.start(

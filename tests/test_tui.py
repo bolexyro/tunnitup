@@ -5,51 +5,41 @@ from typing import Any
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Input, OptionList, Static
 
-from tunnitup.discovery import ServiceProbe
 from tunnitup.observability import RequestEvent, RouteHealth
 from tunnitup.providers.base import Tunnel
 from tunnitup.routing import Route, RouteTable
 from tunnitup.tui import (
     CommandCenterScreen,
-    PathsScreen,
-    PortsScreen,
-    PreviewScreen,
+    LaunchScreen,
     RouteEditorScreen,
     TuiRuntime,
     TunnitupApp,
 )
 
 
-async def fake_probe(ports: tuple[int, ...]) -> tuple[ServiceProbe, ...]:
-    return tuple(
-        ServiceProbe(
-            port=port,
-            reachable=True,
-            kind="frontend" if index == 0 else "api",
-            detail="test service",
-            suggested_path="/" if index == 0 else "/api",
-        )
-        for index, port in enumerate(ports)
-    )
-
-
-async def test_tui_guides_ports_to_editable_paths_and_preview() -> None:
-    app = TunnitupApp(probe_function=fake_probe)
+async def test_tui_opens_empty_command_center_and_adds_first_root_route() -> None:
+    app = TunnitupApp()
 
     async with app.run_test(size=(100, 36)) as pilot:
-        assert isinstance(app.screen, PortsScreen)
-        ports = app.screen.query_one("#ports", Input)
-        ports.value = "3000, 8000"
-        await pilot.click("#probe")
+        assert isinstance(app.screen, CommandCenterScreen)
+        assert app.runtime is not None
+        assert app.runtime.routes.routes == ()
+
+        await pilot.press("a")
         await pilot.pause()
 
-        assert isinstance(app.screen, PathsScreen)
-        app.screen.query_one("#path-8000", Input).value = "/backend"
-        await pilot.click("#preview")
+        assert isinstance(app.screen, RouteEditorScreen)
+        assert app.screen.query_one("#route-path", Input).value == "/"
+        app.screen.query_one("#route-upstream", Input).value = "3000"
+        await pilot.click("#save")
         await pilot.pause()
 
-        assert isinstance(app.screen, PreviewScreen)
-        assert [route.path for route in app.screen.routes.routes] == ["/backend", "/"]
+        assert isinstance(app.screen, CommandCenterScreen)
+        assert app.runtime.routes.match("/").upstream.port == 3000
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert isinstance(app.screen, LaunchScreen)
 
 
 async def test_tui_opens_command_center_for_existing_runtime() -> None:
@@ -184,6 +174,7 @@ async def test_command_center_animates_the_starting_state() -> None:
         second = str(screen.query_one("#runtime-state", Static).render())
 
         assert "STARTING" in first
+        assert "●" in first
         assert first != second
 
 
@@ -231,9 +222,15 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
 
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.click("#toggle")
+        await pilot.pause()
+        assert isinstance(app.screen, LaunchScreen)
+        app.screen.query_one("#launch-url", Input).value = "public.test"
+        await pilot.click("#launch")
         await pilot.pause(0.05)
 
         assert app.runtime_state == "online"
+        assert app.runtime is not None
+        assert app.runtime.tunnel.url == "https://public.test"
         assert app.tunnel is not None
         assert app.tunnel.public_url == "https://public.test"
 

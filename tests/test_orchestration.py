@@ -1,6 +1,12 @@
+import asyncio
+
 import pytest
 
-from tunnitup.orchestration import local_tunnel_url, run_proxy_with_tunnel
+from tunnitup.orchestration import (
+    ProxyStartupError,
+    local_tunnel_url,
+    run_proxy_with_tunnel,
+)
 from tunnitup.providers.base import ProviderError, Tunnel
 from tunnitup.proxy import ProxySettings
 from tunnitup.routing import Route, RouteTable
@@ -60,3 +66,26 @@ async def test_orchestration_stops_provider_when_it_exits() -> None:
     assert provider.started is True
     assert provider.stopped is True
     assert ready[0].public_url == "https://public.test"
+
+
+async def test_orchestration_surfaces_an_occupied_proxy_port() -> None:
+    listener = await asyncio.start_server(lambda _reader, _writer: None, "127.0.0.1", 0)
+    socket = listener.sockets[0]
+    port = socket.getsockname()[1]
+    provider = FakeProvider()
+
+    try:
+        with pytest.raises(ProxyStartupError, match=f"Port {port} is already in use"):
+            await run_proxy_with_tunnel(
+                RouteTable([Route.parse("/=3000")]),
+                "127.0.0.1",
+                port,
+                ProxySettings(),
+                provider,
+            )
+    finally:
+        listener.close()
+        await listener.wait_closed()
+
+    assert provider.started is False
+    assert provider.stopped is True
