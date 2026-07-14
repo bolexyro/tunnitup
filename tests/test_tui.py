@@ -103,6 +103,34 @@ async def test_command_center_clears_captured_traffic() -> None:
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
 
 
+async def test_command_center_animates_the_starting_state() -> None:
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
+    app.runtime_state = "starting"
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._starting_frame = 0
+        screen._refresh_runtime_state()
+        first = str(screen.query_one("#runtime-state", Static).render())
+        screen._refresh_runtime_state()
+        second = str(screen.query_one("#runtime-state", Static).render())
+
+        assert "STARTING" in first
+        assert first != second
+
+
+def test_command_center_colors_http_methods_and_status_classes() -> None:
+    assert CommandCenterScreen._method_cell("get").style == "bold #5ac8fa"
+    assert CommandCenterScreen._method_cell("POST").style == "bold #72d39a"
+    assert CommandCenterScreen._method_cell("DELETE").style == "bold #ef8d84"
+
+    assert CommandCenterScreen._status_cell(204).style == "bold #72d39a"
+    assert CommandCenterScreen._status_cell(302).style == "bold #77b7f2"
+    assert CommandCenterScreen._status_cell(404).style == "bold #f2c66d"
+    assert CommandCenterScreen._status_cell(503).style == "bold #ef8d84"
+
+
 def test_command_center_uses_semantic_square_health_indicators() -> None:
     now = datetime.now(UTC)
     healthy = RouteHealth(now, "/", "localhost:3000", True, 200, 1.0)

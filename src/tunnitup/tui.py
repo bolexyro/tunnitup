@@ -300,6 +300,7 @@ class CommandCenterScreen(TunnitupScreen):
         )
 
     def on_mount(self) -> None:
+        self._starting_frame = 0
         requests = self.query_one("#requests-table", DataTable)
         requests.add_column("Time", width=9)
         requests.add_column("Method", width=8)
@@ -309,6 +310,7 @@ class CommandCenterScreen(TunnitupScreen):
         self.refresh_dashboard()
         self.call_after_refresh(self._resize_traffic_columns)
         self.set_interval(1, self.refresh_dashboard)
+        self.set_interval(0.16, self._refresh_runtime_state)
         self.observe()
 
     def on_resize(self, _: events.Resize) -> None:
@@ -337,7 +339,7 @@ class CommandCenterScreen(TunnitupScreen):
                 self.tunnitup.runtime_error,
                 title="Tunnel error",
                 severity="error",
-                timeout=10,
+                timeout=4,
             )
 
     def action_add_route(self) -> None:
@@ -360,34 +362,42 @@ class CommandCenterScreen(TunnitupScreen):
         self.notify(
             f"{public.rstrip('/')}{selected.path}  →  {self._display_upstream(selected)}",
             title=f"Route {selected.path}",
-            timeout=6,
+            timeout=2.5,
         )
 
     def action_copy_url(self) -> None:
         if self.tunnitup.tunnel is None:
-            self.notify("Start Tunnitup before copying the public URL.", severity="warning")
+            self.notify(
+                "Start Tunnitup before copying the public URL.",
+                severity="warning",
+                timeout=2,
+            )
             return
         self.app.copy_to_clipboard(self.tunnitup.tunnel.public_url)
-        self.notify("Public URL copied.")
+        self.notify("Public URL copied.", timeout=1.5)
 
     def action_clear_requests(self) -> None:
         count = len(self.tunnitup.observations.requests)
         self.tunnitup.observations.clear_requests()
         self.refresh_dashboard()
         noun = "request" if count == 1 else "requests"
-        self.notify(f"Cleared {count} captured {noun}.")
+        self.notify(f"Cleared {count} captured {noun}.", timeout=1.5)
 
     def action_help(self) -> None:
         self.notify(
             "↑↓ select · Enter inspect · A add · E edit · C copy URL · "
             "X clear traffic · Space start/stop · Q quit",
             title="Keyboard controls",
-            timeout=8,
+            timeout=3,
         )
 
     def _routes_are_editable(self) -> bool:
         if self.tunnitup.runtime_state in {"starting", "online", "stopping"}:
-            self.notify("Stop Tunnitup before changing routes.", severity="warning")
+            self.notify(
+                "Stop Tunnitup before changing routes.",
+                severity="warning",
+                timeout=2,
+            )
             return False
         return True
 
@@ -419,7 +429,7 @@ class CommandCenterScreen(TunnitupScreen):
         try:
             self.tunnitup.runtime = replace(runtime, routes=RouteTable(routes))
         except RouteConfigurationError as exc:
-            self.notify(str(exc), severity="error")
+            self.notify(str(exc), severity="error", timeout=3)
             return
         self.refresh_dashboard()
 
@@ -431,18 +441,29 @@ class CommandCenterScreen(TunnitupScreen):
                 if isinstance(observation, RequestEvent | RouteHealth | ActivityEvent):
                     self.refresh_dashboard()
 
+    def _refresh_runtime_state(self) -> None:
+        state = self.tunnitup.runtime_state.upper()
+        if state == "STARTING":
+            frames = ("▰▱▱", "▱▰▱", "▱▱▰", "▱▰▱")
+            frame = frames[self._starting_frame % len(frames)]
+            self._starting_frame += 1
+            display = Text(f"{frame} STARTING", style="bold #4a9be8")
+        else:
+            color = {
+                "ONLINE": "#5ac8fa",
+                "ERROR": "#ef8d84",
+                "STOPPING": "#f2c66d",
+            }.get(state, "#4a9be8")
+            display = Text(f"■ {state}", style=f"bold {color}")
+        self.query_one("#runtime-state", Static).update(display)
+
+
     def refresh_dashboard(self) -> None:
         runtime = self.tunnitup.runtime
         if runtime is None:
             return
         public = self.tunnitup.tunnel.public_url if self.tunnitup.tunnel else "not connected"
-        state = self.tunnitup.runtime_state.upper()
-        state_color = "#5ac8fa" if state == "ONLINE" else "#4a9be8"
-        if state == "ERROR":
-            state_color = "#ef8d84"
-        self.query_one("#runtime-state", Static).update(
-            f"[bold {state_color}]■[/] [bold]{state}[/]"
-        )
+        self._refresh_runtime_state()
         self.query_one("#public-url", Static).update(public)
         self.query_one("#runtime-meta", Static).update(
             f"provider [bold]{runtime.tunnel.provider}[/]    uptime [bold]{self._uptime()}[/]"
@@ -488,9 +509,9 @@ class CommandCenterScreen(TunnitupScreen):
         for event in reversed(self.tunnitup.observations.requests[-100:]):
             request_table.add_row(
                 event.timestamp.astimezone().strftime("%H:%M:%S"),
-                event.method,
+                self._method_cell(event.method),
                 event.path,
-                str(event.status),
+                self._status_cell(event.status),
                 f"{event.duration_ms:.0f}ms",
                 height=1,
             )
@@ -520,6 +541,34 @@ class CommandCenterScreen(TunnitupScreen):
             health,
         )
         return row
+
+    @staticmethod
+    def _method_cell(method: str) -> Text:
+        normalized = method.upper()
+        color = {
+            "GET": "#5ac8fa",
+            "POST": "#72d39a",
+            "PUT": "#f2c66d",
+            "PATCH": "#e6a85c",
+            "DELETE": "#ef8d84",
+            "OPTIONS": "#c79bf2",
+            "HEAD": "#9fc8ef",
+        }.get(normalized, "#91a4bb")
+        return Text(normalized, style=f"bold {color}")
+
+    @staticmethod
+    def _status_cell(status: int) -> Text:
+        if 200 <= status < 300:
+            color = "#72d39a"
+        elif 300 <= status < 400:
+            color = "#77b7f2"
+        elif 400 <= status < 500:
+            color = "#f2c66d"
+        elif status >= 500:
+            color = "#ef8d84"
+        else:
+            color = "#91a4bb"
+        return Text(str(status), style=f"bold {color}")
 
     @staticmethod
     def _health_indicator(result: RouteHealth | None) -> Text:
@@ -790,7 +839,7 @@ class TunnitupApp(App[None]):
     }
 
     #routes-list > .option-list--option {
-        padding: 0;
+        padding: 0 1;
     }
 
     #routes-list > .option-list--option-highlighted {
