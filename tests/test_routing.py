@@ -12,7 +12,7 @@ from tunnitup.routing import (
 def test_port_shorthand_uses_localhost() -> None:
     route = Route.parse("/api=8000")
 
-    assert str(route.upstream) == "http://127.0.0.1:8000"
+    assert str(route.upstream) == "http://localhost:8000"
 
 
 def test_longest_boundary_aware_prefix_wins() -> None:

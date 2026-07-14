@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Input, OptionList, Static
+from textual.widgets import Checkbox, DataTable, Input, OptionList, Static
 
 from tunnitup.observability import RequestEvent, RouteHealth
 from tunnitup.providers.base import Tunnel
@@ -257,3 +257,25 @@ async def test_command_center_adds_a_route_while_stopped() -> None:
         assert isinstance(app.screen, CommandCenterScreen)
         assert app.runtime is not None
         assert {route.path for route in app.runtime.routes.routes} == {"/", "/api"}
+
+
+async def test_new_non_root_route_strips_its_public_prefix_by_default() -> None:
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=5173")])))
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+
+        editor = app.screen
+        assert isinstance(editor, RouteEditorScreen)
+        assert editor.query_one("#route-strip-prefix", Checkbox).value is True
+        editor.query_one("#route-path", Input).value = "/astropay-api"
+        editor.query_one("#route-upstream", Input).value = "3009"
+        await pilot.click("#save")
+        await pilot.pause()
+
+        assert app.runtime is not None
+        route = app.runtime.routes.match("/astropay-api/docs")
+        assert route is not None
+        assert route.strip_prefix is True
+        assert str(route.target_url("/astropay-api/docs")) == "http://localhost:3009/docs"

@@ -89,7 +89,7 @@ def test_validate_shows_effective_routes(tmp_path: Path, monkeypatch: Any) -> No
     assert result.exit_code == 0
     assert "Configuration is valid" in result.output
     assert "http://127.0.0.1:9090" in result.output
-    assert "http://127.0.0.1:3000" in result.output
+    assert "http://localhost:3000" in result.output
 
 
 def test_proxy_automatically_loads_config_and_accepts_setting_overrides(

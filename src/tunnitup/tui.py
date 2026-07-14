@@ -15,7 +15,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Input, Label, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from textual.worker import Worker
 
@@ -131,6 +131,13 @@ class RouteEditorScreen(ModalScreen[Route | None]):
                 value=str(self.route.upstream) if self.route else "8000",
                 id="route-upstream",
             )
+            yield Checkbox(
+                "Strip public path before forwarding",
+                value=(
+                    self.route.strip_prefix if self.route is not None else self.default_path != "/"
+                ),
+                id="route-strip-prefix",
+            )
             yield Static("", id="route-error", classes="error")
             with Horizontal(classes="actions"):
                 yield Button("Cancel", id="cancel")
@@ -156,7 +163,7 @@ class RouteEditorScreen(ModalScreen[Route | None]):
             route = Route.parse(
                 f"{self.query_one('#route-path', Input).value}="
                 f"{self.query_one('#route-upstream', Input).value}",
-                strip_prefix=self.route.strip_prefix if self.route else False,
+                strip_prefix=self.query_one("#route-strip-prefix", Checkbox).value,
             )
         except RouteConfigurationError as exc:
             self.query_one("#route-error", Static).update(str(exc))

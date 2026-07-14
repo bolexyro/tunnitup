@@ -28,7 +28,7 @@ def normalize_upstream(value: str) -> URL:
         raise RouteConfigurationError("route upstreams cannot be empty")
 
     if value.isdigit():
-        value = f"http://127.0.0.1:{value}"
+        value = f"http://localhost:{value}"
     elif "://" not in value:
         value = f"http://{value}"
 

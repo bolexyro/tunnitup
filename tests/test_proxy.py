@@ -326,13 +326,9 @@ async def test_rewrites_prefixed_redirects_to_the_public_route() -> None:
     upstream_app = web.Application()
     upstream_app.router.add_get("/start", redirect)
     async with TestServer(upstream_app) as upstream:
-        routes = RouteTable(
-            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
-        )
+        routes = RouteTable([Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)])
         async with TestClient(TestServer(create_proxy_app(routes))) as client:
-            relative = await client.get(
-                "/api/start?kind=relative", allow_redirects=False
-            )
+            relative = await client.get("/api/start?kind=relative", allow_redirects=False)
             absolute = await client.get(
                 "/api/start",
                 headers={
@@ -359,9 +355,7 @@ async def test_scopes_upstream_cookies_to_the_public_route() -> None:
     upstream_app = web.Application()
     upstream_app.router.add_get("/cookies", cookies)
     async with TestServer(upstream_app) as upstream:
-        routes = RouteTable(
-            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
-        )
+        routes = RouteTable([Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)])
         async with TestClient(TestServer(create_proxy_app(routes))) as client:
             response = await client.get("/api/cookies")
             set_cookie = response.headers.getall("Set-Cookie")
@@ -390,15 +384,11 @@ async def test_relays_websocket_frames_and_forwarded_prefix() -> None:
     upstream_app.router.add_get("/socket", websocket)
     observations = ObservationStore()
     async with TestServer(upstream_app) as upstream:
-        routes = RouteTable(
-            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
-        )
+        routes = RouteTable([Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)])
         async with TestClient(
             TestServer(create_proxy_app(routes, observations=observations))
         ) as client:
-            socket = await client.ws_connect(
-                "/api/socket", protocols=("tunnitup-test",)
-            )
+            socket = await client.ws_connect("/api/socket", protocols=("tunnitup-test",))
             assert socket.protocol == "tunnitup-test"
             assert (await socket.receive()).data == "/api"
             await socket.send_str("hello")
@@ -409,3 +399,30 @@ async def test_relays_websocket_frames_and_forwarded_prefix() -> None:
 
     assert observations.requests[-1].status == 101
     assert observations.requests[-1].route_path == "/api"
+
+
+async def test_port_shorthand_reaches_an_ipv6_only_localhost_service() -> None:
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nipv6-vite")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    try:
+        listener = await asyncio.start_server(respond, "::1", 0)
+    except OSError:
+        pytest.skip("IPv6 loopback is unavailable")
+    port = listener.sockets[0].getsockname()[1]
+    proxy = TestServer(create_proxy_app(RouteTable([Route.parse(f"/={port}")])))
+    client = TestClient(proxy)
+
+    try:
+        await client.start_server()
+        response = await client.get("/")
+        assert response.status == 200
+        assert await response.text() == "ipv6-vite"
+    finally:
+        await client.close()
+        listener.close()
+        await listener.wait_closed()
