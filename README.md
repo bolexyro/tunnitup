@@ -90,7 +90,19 @@ tunnitup up 3000 --route /api=8000 --url https://your-domain.ngrok.app
 
 ## Proxy behavior
 
-Tunnitup streams request and response bodies instead of loading them fully into memory. It removes hop-by-hop headers, preserves tunnel-provided `X-Forwarded-*` context, does not share upstream cookies between callers, and follows redirects transparently instead of consuming them.
+Tunnitup streams request and response bodies instead of loading them fully into memory. It removes hop-by-hop headers, validates tunnel-provided forwarding context, does not share upstream cookies between callers, and passes redirects back to the browser instead of consuming them. WebSocket upgrades are relayed bidirectionally, so development features such as HMR can use the same routes as normal HTTP traffic.
+
+For non-root routes, Tunnitup sends `X-Forwarded-Prefix`, rewrites upstream `Location` headers to the public route, and scopes upstream cookies to that route. A same-origin referrer fallback handles browser requests such as Swagger's root-relative `/v3/api-docs`, but it is intentionally only a convenience heuristic. When two services can own the same root-relative path, configure an explicit alias so routing stays deterministic:
+
+```toml
+[routes]
+"/" = 3000
+"/api" = { upstream = 8000, strip_prefix = true }
+"/v3" = 8000
+"/swagger-ui" = 8000
+```
+
+Tunnitup never rewrites HTML, JavaScript, JSON, or other response bodies. Applications that emit absolute paths should honor `X-Forwarded-Prefix`, support a base-path setting, or declare the required aliases explicitly.
 
 Connection attempts time out after 10 seconds, and upstreams must produce data at least once every 60 seconds. These safe defaults can be adjusted for unusually slow development services:
 

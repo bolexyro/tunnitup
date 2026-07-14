@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
 from time import perf_counter
 
 import aiohttp
@@ -23,6 +25,15 @@ HOP_BY_HOP_HEADERS = frozenset(
         "trailer",
         "transfer-encoding",
         "upgrade",
+    }
+)
+WEBSOCKET_HANDSHAKE_HEADERS = frozenset(
+    {
+        "sec-websocket-accept",
+        "sec-websocket-extensions",
+        "sec-websocket-key",
+        "sec-websocket-protocol",
+        "sec-websocket-version",
     }
 )
 
@@ -54,8 +65,13 @@ def _connection_tokens(headers: Mapping[str, str]) -> set[str]:
     }
 
 
-def _request_headers(request: web.Request) -> CIMultiDict[str]:
-    blocked = HOP_BY_HOP_HEADERS | _connection_tokens(request.headers) | {"expect", "host"}
+def _request_headers(request: web.Request, route: Route) -> CIMultiDict[str]:
+    blocked = (
+        HOP_BY_HOP_HEADERS
+        | WEBSOCKET_HANDSHAKE_HEADERS
+        | _connection_tokens(request.headers)
+        | {"expect", "host"}
+    )
     headers = CIMultiDict(
         (name, value) for name, value in request.headers.items() if name.lower() not in blocked
     )
@@ -65,16 +81,118 @@ def _request_headers(request: web.Request) -> CIMultiDict[str]:
     existing = request.headers.get("X-Forwarded-For")
     if client_ip:
         headers["X-Forwarded-For"] = f"{existing}, {client_ip}" if existing else client_ip
-    headers["X-Forwarded-Host"] = request.headers.get("X-Forwarded-Host", request.host)
-    headers["X-Forwarded-Proto"] = request.headers.get("X-Forwarded-Proto", request.scheme)
+    headers["X-Forwarded-Host"] = _forwarded_host(request)
+    headers["X-Forwarded-Proto"] = _forwarded_proto(request)
+    if route.path != "/":
+        headers["X-Forwarded-Prefix"] = route.path
+    else:
+        headers.popall("X-Forwarded-Prefix", None)
     return headers
 
 
-def _response_headers(headers: CIMultiDictProxy[str]) -> CIMultiDict[str]:
+def _forwarded_host(request: web.Request) -> str:
+    candidate = request.headers.get("X-Forwarded-Host", request.host).split(",", 1)[0].strip()
+    try:
+        parsed = URL(f"//{candidate}")
+    except ValueError:
+        return request.host
+    valid = parsed.host and parsed.user is None and parsed.password is None
+    return candidate if valid else request.host
+
+
+def _forwarded_proto(request: web.Request) -> str:
+    candidate = request.headers.get("X-Forwarded-Proto", request.scheme).split(",", 1)[0]
+    normalized = candidate.strip().casefold()
+    return normalized if normalized in {"http", "https"} else request.scheme
+
+
+def _response_headers(
+    headers: CIMultiDictProxy[str], request: web.Request, route: Route
+) -> CIMultiDict[str]:
     blocked = HOP_BY_HOP_HEADERS | _connection_tokens(headers)
-    return CIMultiDict(
-        (name, value) for name, value in headers.items() if name.lower() not in blocked
+    rewritten = CIMultiDict[str]()
+    for name, value in headers.items():
+        lowered = name.lower()
+        if lowered in blocked:
+            continue
+        if lowered == "location":
+            value = _rewrite_location(value, request, route)
+        elif lowered == "set-cookie":
+            for cookie in _rewrite_set_cookie(value, route):
+                rewritten.add(name, cookie)
+            continue
+        rewritten.add(name, value)
+    return rewritten
+
+
+def _prefixed_path(path: str, route: Route) -> str:
+    if route.path == "/" or route.matches(path):
+        return path
+    return f"{route.path}{path if path.startswith('/') else f'/{path}'}"
+
+
+def _rewrite_location(location: str, request: web.Request, route: Route) -> str:
+    if route.path == "/":
+        return location
+    try:
+        target = URL(location, encoded=True)
+    except ValueError:
+        return location
+
+    if not target.is_absolute():
+        if not location.startswith("/"):
+            return location
+        return str(
+            target.with_path(
+                _prefixed_path(target.raw_path, route),
+                encoded=True,
+                keep_query=True,
+                keep_fragment=True,
+            )
+        )
+
+    if target.host != route.upstream.host or target.port != route.upstream.port:
+        return location
+
+    public_scheme = _forwarded_proto(request)
+    public_host = _forwarded_host(request)
+    public = URL.build(scheme=public_scheme, authority=public_host)
+    rewritten = str(
+        public.with_path(_prefixed_path(target.raw_path, route), encoded=True)
     )
+    if target.raw_query_string:
+        rewritten = f"{rewritten}?{target.raw_query_string}"
+    if target.raw_fragment:
+        rewritten = f"{rewritten}#{target.raw_fragment}"
+    return rewritten
+
+
+def _rewrite_set_cookie(header: str, route: Route) -> tuple[str, ...]:
+    if route.path == "/":
+        return (header,)
+    cookies: SimpleCookie[str] = SimpleCookie()
+    try:
+        cookies.load(header)
+    except ValueError:
+        return (header,)
+    if not cookies:
+        return (header,)
+
+    rewritten: list[str] = []
+    for morsel in cookies.values():
+        cookie_path = morsel["path"]
+        if not cookie_path:
+            morsel["path"] = route.path
+        elif cookie_path == "/":
+            morsel["path"] = route.path
+        elif cookie_path.startswith("/"):
+            morsel["path"] = _prefixed_path(cookie_path, route)
+        if morsel["domain"] and morsel["domain"].lstrip(".").casefold() == (
+            route.upstream.host or ""
+        ).casefold():
+            morsel["domain"] = ""
+        rewritten.append(morsel.OutputString())
+    return tuple(rewritten)
 
 
 async def _session_context(app: web.Application) -> AsyncIterator[None]:
@@ -120,11 +238,13 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
         return response
 
     target = route.target_url(request.path, request.query_string)
+    if request.headers.get("Upgrade", "").casefold() == "websocket":
+        return await _proxy_websocket(request, route, target, started)
     try:
         upstream = await request.app[SESSION_KEY].request(
             request.method,
             target,
-            headers=_request_headers(request),
+            headers=_request_headers(request, route),
             data=request.content.iter_chunked(64 * 1024),
             allow_redirects=False,
         )
@@ -161,7 +281,7 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
         response = web.StreamResponse(
             status=upstream.status,
             reason=upstream.reason,
-            headers=_response_headers(upstream.headers),
+            headers=_response_headers(upstream.headers, request, route),
         )
         await response.prepare(request)
         async for chunk in upstream.content.iter_chunked(64 * 1024):
@@ -171,6 +291,92 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
         return response
     finally:
         upstream.release()
+
+
+async def _proxy_websocket(
+    request: web.Request, route: Route, target: URL, started: float
+) -> web.StreamResponse:
+    protocols = tuple(
+        protocol.strip()
+        for protocol in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if protocol.strip()
+    )
+    try:
+        upstream = await request.app[SESSION_KEY].ws_connect(
+            target,
+            headers=_request_headers(request, route),
+            protocols=protocols,
+            autoping=False,
+            autoclose=False,
+            compress=0,
+            max_msg_size=0,
+        )
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        _record_request(
+            request, started, route=route, status=502, error="websocket unavailable"
+        )
+        return web.json_response(
+            {
+                "error": "upstream websocket is unavailable",
+                "route": route.path,
+                "upstream": str(route.upstream),
+                "detail": str(exc),
+            },
+            status=502,
+        )
+
+    selected_protocols = (upstream.protocol,) if upstream.protocol else ()
+    downstream = web.WebSocketResponse(
+        protocols=selected_protocols,
+        autoping=False,
+        autoclose=False,
+        compress=False,
+        max_msg_size=0,
+    )
+    await downstream.prepare(request)
+
+    downstream_to_upstream = asyncio.create_task(
+        _relay_websocket(downstream, upstream)
+    )
+    upstream_to_downstream = asyncio.create_task(
+        _relay_websocket(upstream, downstream)
+    )
+    tasks = {downstream_to_upstream, upstream_to_downstream}
+    try:
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        await upstream.close()
+        await downstream.close()
+
+    _record_request(request, started, route=route, status=101)
+    return downstream
+
+
+async def _relay_websocket(
+    source: aiohttp.ClientWebSocketResponse | web.WebSocketResponse,
+    destination: aiohttp.ClientWebSocketResponse | web.WebSocketResponse,
+) -> None:
+    async for message in source:
+        if message.type == aiohttp.WSMsgType.TEXT:
+            await destination.send_str(message.data)
+        elif message.type == aiohttp.WSMsgType.BINARY:
+            await destination.send_bytes(message.data)
+        elif message.type == aiohttp.WSMsgType.PING:
+            await destination.ping(message.data)
+        elif message.type == aiohttp.WSMsgType.PONG:
+            await destination.pong(message.data)
+        elif message.type == aiohttp.WSMsgType.CLOSE:
+            await destination.close(code=message.data, message=message.extra.encode())
+            break
+        elif message.type in {
+            aiohttp.WSMsgType.CLOSED,
+            aiohttp.WSMsgType.CLOSING,
+            aiohttp.WSMsgType.ERROR,
+        }:
+            break
 
 
 def _record_request(

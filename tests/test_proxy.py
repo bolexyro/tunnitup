@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from http.cookies import SimpleCookie
 
 import pytest
 from aiohttp import ClientSession, DummyCookieJar, web
@@ -22,6 +23,7 @@ async def upstream_server() -> AsyncIterator[TestServer]:
                 "query": request.query_string,
                 "body": (await request.read()).decode(),
                 "forwarded_host": request.headers.get("X-Forwarded-Host"),
+                "forwarded_prefix": request.headers.get("X-Forwarded-Prefix"),
             },
             headers={"X-Upstream": "echo"},
         )
@@ -63,6 +65,7 @@ async def test_forwards_method_path_query_body_and_response_headers(
         "query": "active=true",
         "body": "hello",
         "forwarded_host": response.request_info.url.host + f":{response.request_info.url.port}",
+        "forwarded_prefix": "/api",
     }
 
 
@@ -309,3 +312,100 @@ async def test_referrer_affinity_ignores_cross_origin_and_specific_direct_routes
 
     assert cross_origin_text == "frontend"
     assert specific_text == "backend"
+
+
+async def test_rewrites_prefixed_redirects_to_the_public_route() -> None:
+    async def redirect(request: web.Request) -> web.Response:
+        location = (
+            "/login?next=%2Fdashboard#form"
+            if request.query.get("kind") == "relative"
+            else f"http://{request.host}/login?next=%2Fdashboard#form"
+        )
+        return web.Response(status=302, headers={"Location": location})
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/start", redirect)
+    async with TestServer(upstream_app) as upstream:
+        routes = RouteTable(
+            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
+        )
+        async with TestClient(TestServer(create_proxy_app(routes))) as client:
+            relative = await client.get(
+                "/api/start?kind=relative", allow_redirects=False
+            )
+            absolute = await client.get(
+                "/api/start",
+                headers={
+                    "Host": "public.example.test",
+                    "X-Forwarded-Host": "public.example.test",
+                    "X-Forwarded-Proto": "https",
+                },
+                allow_redirects=False,
+            )
+
+    assert relative.headers["Location"] == "/api/login?next=%2Fdashboard#form"
+    assert absolute.headers["Location"] == (
+        "https://public.example.test/api/login?next=%2Fdashboard#form"
+    )
+
+
+async def test_scopes_upstream_cookies_to_the_public_route() -> None:
+    async def cookies(_request: web.Request) -> web.Response:
+        response = web.Response(text="ok")
+        response.set_cookie("session", "secret", path="/", domain="127.0.0.1")
+        response.set_cookie("oauth", "state", path="/oauth", httponly=True)
+        return response
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/cookies", cookies)
+    async with TestServer(upstream_app) as upstream:
+        routes = RouteTable(
+            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
+        )
+        async with TestClient(TestServer(create_proxy_app(routes))) as client:
+            response = await client.get("/api/cookies")
+            set_cookie = response.headers.getall("Set-Cookie")
+
+    parsed: SimpleCookie[str] = SimpleCookie()
+    parsed.load("\n".join(set_cookie))
+    assert parsed["session"]["path"] == "/api"
+    assert parsed["session"]["domain"] == ""
+    assert parsed["oauth"]["path"] == "/api/oauth"
+    assert parsed["oauth"]["httponly"] is True
+
+
+async def test_relays_websocket_frames_and_forwarded_prefix() -> None:
+    async def websocket(request: web.Request) -> web.WebSocketResponse:
+        socket = web.WebSocketResponse(protocols=("tunnitup-test",))
+        await socket.prepare(request)
+        await socket.send_str(request.headers.get("X-Forwarded-Prefix", "missing"))
+        async for message in socket:
+            if message.type == web.WSMsgType.TEXT:
+                await socket.send_str(f"echo:{message.data}")
+            elif message.type == web.WSMsgType.BINARY:
+                await socket.send_bytes(message.data[::-1])
+        return socket
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/socket", websocket)
+    observations = ObservationStore()
+    async with TestServer(upstream_app) as upstream:
+        routes = RouteTable(
+            [Route.parse(f"/api={upstream.make_url('')}", strip_prefix=True)]
+        )
+        async with TestClient(
+            TestServer(create_proxy_app(routes, observations=observations))
+        ) as client:
+            socket = await client.ws_connect(
+                "/api/socket", protocols=("tunnitup-test",)
+            )
+            assert socket.protocol == "tunnitup-test"
+            assert (await socket.receive()).data == "/api"
+            await socket.send_str("hello")
+            assert (await socket.receive()).data == "echo:hello"
+            await socket.send_bytes(b"abc")
+            assert (await socket.receive()).data == b"cba"
+            await socket.close()
+
+    assert observations.requests[-1].status == 101
+    assert observations.requests[-1].route_path == "/api"
