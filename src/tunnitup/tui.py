@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import cast
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Label, Static
 from textual.worker import Worker
 
@@ -195,48 +199,125 @@ class PreviewScreen(TunnitupScreen):
         self.tunnitup.start_stack()
 
 
+class RouteEditorScreen(ModalScreen[Route | None]):
+    """Small route editor shared by the add and edit commands."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    def __init__(self, route: Route | None = None) -> None:
+        super().__init__()
+        self.route = route
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="route-editor"):
+            yield Static("EDIT ROUTE" if self.route else "ADD ROUTE", classes="modal-title")
+            yield Label("Public path", classes="field-label")
+            yield Input(value=self.route.path if self.route else "/api", id="route-path")
+            yield Label("Local port or URL", classes="field-label")
+            yield Input(
+                value=str(self.route.upstream) if self.route else "8000",
+                id="route-upstream",
+            )
+            yield Static("", id="route-error", classes="error")
+            with Horizontal(classes="actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Save route", id="save", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#route-path", Input).focus()
+
+    def on_input_submitted(self, _: Input.Submitted) -> None:
+        self.action_save()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.action_cancel()
+        elif event.button.id == "save":
+            self.action_save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        try:
+            route = Route.parse(
+                f"{self.query_one('#route-path', Input).value}="
+                f"{self.query_one('#route-upstream', Input).value}",
+                strip_prefix=self.route.strip_prefix if self.route else False,
+            )
+        except RouteConfigurationError as exc:
+            self.query_one("#route-error", Static).update(str(exc))
+            return
+        self.dismiss(route)
+
+
 class CommandCenterScreen(TunnitupScreen):
     BINDINGS = [
-        ("space", "toggle", "Start / stop"),
-        ("r", "refresh", "Refresh"),
-        ("e", "error_details", "Error details"),
-        ("q", "app.quit", "Quit"),
+        Binding("space", "toggle", show=False),
+        Binding("enter", "inspect_route", show=False),
+        Binding("a", "add_route", show=False),
+        Binding("e", "edit_route", show=False),
+        Binding("c", "copy_url", show=False),
+        Binding("d", "error_details", show=False),
+        Binding("r", "refresh", show=False),
+        Binding("question_mark", "help", show=False),
+        Binding("q", "app.quit", show=False),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("TUNNITUP   one domain, many local services", classes="topbar")
-        with Horizontal(id="command-bar"):
+        with Horizontal(id="command-topbar"):
+            yield Static(self._project_label(), id="project-label")
+            yield Button("▶  start", id="toggle", variant="primary")
+        with Horizontal(id="live-strip"):
             yield Static("", id="runtime-state")
             yield Static("", id="public-url")
             yield Static("", id="runtime-meta")
-            yield Button("Start", id="toggle", variant="primary")
         yield Static("", id="runtime-error", classes="error-banner")
         with Horizontal(id="dashboard"):
             with Vertical(id="routes-panel", classes="panel"):
-                yield Static("", id="route-heading", classes="pane-heading")
-                yield DataTable(id="routes-table", cursor_type="row")
+                with Horizontal(classes="pane-heading"):
+                    yield Static("", id="route-heading")
+                    yield Button("a  add", id="add-route")
+                yield DataTable(
+                    id="routes-table", cursor_type="row", show_header=False, cell_padding=0
+                )
             with Vertical(id="requests-panel", classes="panel"):
-                yield Static("", id="traffic-heading", classes="pane-heading")
-                yield DataTable(id="requests-table", cursor_type="row")
-        yield Footer()
+                with Horizontal(classes="pane-heading"):
+                    yield Static("RECENT TRAFFIC", id="traffic-heading")
+                    yield Static("0 REQ/MIN", id="request-rate")
+                yield DataTable(
+                    id="requests-table",
+                    cursor_type="row",
+                    show_cursor=False,
+                    header_height=2,
+                )
+        yield Static(
+            "[bold #9fc8ef]↑↓[/] route    [bold #9fc8ef]enter[/] inspect    "
+            "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
+            "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]?[/] help",
+            id="keybar",
+        )
 
     def on_mount(self) -> None:
         routes = self.query_one("#routes-table", DataTable)
         routes.add_column("Path", width=12)
         routes.add_column("Upstream", width=30)
-        routes.add_column("Health", width=18)
+        routes.add_column("Health", width=2)
         requests = self.query_one("#requests-table", DataTable)
         requests.add_column("Time", width=9)
         requests.add_column("Method", width=8)
         requests.add_column("Path", width=32)
-        requests.add_column("Status", width=8)
-        requests.add_column("Duration", width=10)
+        requests.add_column("Code", width=8)
+        requests.add_column("Latency", width=10)
         self.refresh_dashboard()
+        self.set_interval(1, self.refresh_dashboard)
         self.observe()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "toggle":
             self.action_toggle()
+        elif event.button.id == "add-route":
+            self.action_add_route()
 
     def action_toggle(self) -> None:
         if self.tunnitup.runtime_state in {"starting", "online"}:
@@ -256,6 +337,81 @@ class CommandCenterScreen(TunnitupScreen):
                 timeout=10,
             )
 
+    def action_add_route(self) -> None:
+        if not self._routes_are_editable():
+            return
+        self.app.push_screen(RouteEditorScreen(), self._add_route)
+
+    def action_edit_route(self) -> None:
+        if not self._routes_are_editable():
+            return
+        selected = self._selected_route()
+        if selected is not None:
+            self.app.push_screen(RouteEditorScreen(selected), self._replace_route)
+
+    def action_inspect_route(self) -> None:
+        selected = self._selected_route()
+        if selected is None:
+            return
+        public = self.tunnitup.tunnel.public_url if self.tunnitup.tunnel else "PUBLIC DOMAIN"
+        self.notify(
+            f"{public.rstrip('/')}{selected.path}  →  {self._display_upstream(selected)}",
+            title=f"Route {selected.path}",
+            timeout=6,
+        )
+
+    def action_copy_url(self) -> None:
+        if self.tunnitup.tunnel is None:
+            self.notify("Start Tunnitup before copying the public URL.", severity="warning")
+            return
+        self.app.copy_to_clipboard(self.tunnitup.tunnel.public_url)
+        self.notify("Public URL copied.")
+
+    def action_help(self) -> None:
+        self.notify(
+            "↑↓ select · Enter inspect · A add · E edit · C copy URL · Space start/stop · Q quit",
+            title="Keyboard controls",
+            timeout=8,
+        )
+
+    def _routes_are_editable(self) -> bool:
+        if self.tunnitup.runtime_state in {"starting", "online", "stopping"}:
+            self.notify("Stop Tunnitup before changing routes.", severity="warning")
+            return False
+        return True
+
+    def _selected_route(self) -> Route | None:
+        runtime = self.tunnitup.runtime
+        table = self.query_one("#routes-table", DataTable)
+        if runtime is None or table.row_count == 0:
+            return None
+        path = str(table.get_row_at(table.cursor_row)[0])
+        return next((route for route in runtime.routes.routes if route.path == path), None)
+
+    def _add_route(self, route: Route | None) -> None:
+        if route is None:
+            return
+        self._update_routes(route)
+
+    def _replace_route(self, route: Route | None) -> None:
+        selected = self._selected_route()
+        if route is None or selected is None:
+            return
+        self._update_routes(route, replacing=selected.path)
+
+    def _update_routes(self, route: Route, *, replacing: str | None = None) -> None:
+        runtime = self.tunnitup.runtime
+        if runtime is None:
+            return
+        routes = [item for item in runtime.routes.routes if item.path != replacing]
+        routes.append(route)
+        try:
+            self.tunnitup.runtime = replace(runtime, routes=RouteTable(routes))
+        except RouteConfigurationError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.refresh_dashboard()
+
     @work(exclusive=True, exit_on_error=False)
     async def observe(self) -> None:
         async with self.tunnitup.observations.subscribe() as queue:
@@ -270,17 +426,22 @@ class CommandCenterScreen(TunnitupScreen):
             return
         public = self.tunnitup.tunnel.public_url if self.tunnitup.tunnel else "not connected"
         state = self.tunnitup.runtime_state.upper()
-        active = self.tunnitup.observations.active_requests
         state_color = "#5ac8fa" if state == "ONLINE" else "#4a9be8"
         if state == "ERROR":
             state_color = "#ef8d84"
-        self.query_one("#runtime-state", Static).update(f"[bold {state_color}]● {state}[/]")
+        self.query_one("#runtime-state", Static).update(
+            f"[bold {state_color}]■[/] [bold]{state}[/]"
+        )
         self.query_one("#public-url", Static).update(public)
         self.query_one("#runtime-meta", Static).update(
-            f"provider {runtime.tunnel.provider}  ·  active {active}"
+            f"provider [bold]{runtime.tunnel.provider}[/]    uptime [bold]{self._uptime()}[/]"
         )
         button = self.query_one("#toggle", Button)
-        button.label = "Stop" if self.tunnitup.runtime_state in {"starting", "online"} else "Start"
+        button.label = (
+            "■  stop"
+            if self.tunnitup.runtime_state in {"starting", "online"}
+            else "▶  start"
+        )
         button.variant = (
             "error" if self.tunnitup.runtime_state in {"starting", "online"} else "primary"
         )
@@ -294,16 +455,20 @@ class CommandCenterScreen(TunnitupScreen):
         for route in sorted(runtime.routes.routes, key=lambda item: item.path):
             result = health.get(route.path)
             if result is None:
-                state_text = "waiting"
+                state_text = Text("●", style="#5d7390")
             elif result.healthy:
-                state_text = f"healthy · {result.status}"
+                state_text = Text("●", style="#5ac8fa")
             else:
-                state_text = result.error or f"unhealthy · {result.status}"
-            route_table.add_row(route.path, str(route.upstream), state_text)
+                state_text = Text("●", style="#ef8d84")
+            route_table.add_row(
+                route.path,
+                self._display_upstream(route),
+                state_text,
+                height=3,
+            )
         healthy_count = sum(item.healthy for item in health.values())
         self.query_one("#route-heading", Static).update(
-            f"[bold #4a9be8]ROUTES[/]    "
-            f"[dim]{healthy_count}/{len(runtime.routes.routes)} healthy[/]"
+            f"ROUTES  {healthy_count}/{len(runtime.routes.routes)} HEALTHY"
         )
 
         request_table = self.query_one("#requests-table", DataTable)
@@ -314,12 +479,42 @@ class CommandCenterScreen(TunnitupScreen):
                 event.method,
                 event.path,
                 str(event.status),
-                f"{event.duration_ms:.0f} ms",
+                f"{event.duration_ms:.0f}ms",
+                height=2,
             )
-        self.query_one("#traffic-heading", Static).update(
-            f"[bold #4a9be8]RECENT REQUESTS[/]    "
-            f"[dim]{len(self.tunnitup.observations.requests)} captured[/]"
+        cutoff = datetime.now(UTC) - timedelta(minutes=1)
+        rate = sum(event.timestamp >= cutoff for event in self.tunnitup.observations.requests)
+        self.query_one("#request-rate", Static).update(f"{rate} REQ/MIN")
+
+    def _project_label(self) -> str:
+        source = self.tunnitup.runtime.source if self.tunnitup.runtime else None
+        project = source.parent if source and source.suffix else source or Path.cwd()
+        try:
+            display = f"~/{project.resolve().relative_to(Path.home().resolve()).as_posix()}"
+        except ValueError:
+            display = str(project)
+        return f"tunnitup · {display}"
+
+    def _uptime(self) -> str:
+        if self.tunnitup.online_since is None:
+            return "00:00"
+        seconds = max(0, int(monotonic() - self.tunnitup.online_since))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours:02}:{minutes:02}:{seconds:02}"
+        return f"{minutes:02}:{seconds:02}"
+
+    @staticmethod
+    def _display_upstream(route: Route) -> str:
+        host = (
+            "localhost"
+            if route.upstream.host in {"127.0.0.1", "::1"}
+            else route.upstream.host
         )
+        port = f":{route.upstream.port}" if route.upstream.port else ""
+        path = route.upstream.path.rstrip("/")
+        return f"{host}{port}{path}"
 
     @staticmethod
     def _friendly_error(error: str | None) -> str:
@@ -329,17 +524,17 @@ class CommandCenterScreen(TunnitupScreen):
         if "already online" in lowered:
             return (
                 "Domain already online. Stop the other ngrok session, then press Start.  "
-                "[dim]E: details[/]"
+                "[dim]D: details[/]"
             )
         if "authtoken" in lowered or "authentication" in lowered:
             return (
                 "ngrok needs authentication. Run: ngrok config add-authtoken <token>  "
-                "[dim]E: details[/]"
+                "[dim]D: details[/]"
             )
         if "not found on path" in lowered:
-            return "ngrok is not installed or is not on PATH.  [dim]E: details[/]"
+            return "ngrok is not installed or is not on PATH.  [dim]D: details[/]"
         first_line = next((line.strip() for line in error.splitlines() if line.strip()), error)
-        return f"{first_line[:140]}  [dim]E: details[/]"
+        return f"{first_line[:140]}  [dim]D: details[/]"
 
 
 class TunnitupApp(App[None]):
@@ -452,16 +647,42 @@ class TunnitupApp(App[None]):
         border-bottom: solid #27394e;
     }
 
-    #command-bar {
-        height: 3;
-        padding: 0 2;
+    CommandCenterScreen {
+        border: solid #34465c;
+    }
+
+    #command-topbar {
+        height: 4;
+        padding: 0 1;
         background: #1d2b3b;
         border-bottom: solid #34465c;
         align-vertical: middle;
     }
 
+    #project-label {
+        width: 1fr;
+        color: #b7c9df;
+        text-style: bold;
+        content-align: left middle;
+    }
+
+    #command-topbar #toggle {
+        width: 12;
+        min-width: 12;
+        height: 3;
+        margin: 0;
+    }
+
+    #live-strip {
+        height: 3;
+        padding: 0 1;
+        background: #101721;
+        border-bottom: solid #34465c;
+        align-vertical: middle;
+    }
+
     #runtime-state {
-        width: 18;
+        width: 12;
         text-overflow: ellipsis;
     }
 
@@ -472,18 +693,10 @@ class TunnitupApp(App[None]):
     }
 
     #runtime-meta {
-        width: 34;
-        color: #91a4bb;
-        text-align: right;
-        margin-right: 2;
+        width: 38;
+        color: #9fc0e5;
+        text-align: left;
         text-overflow: ellipsis;
-    }
-
-    #command-bar #toggle {
-        width: 12;
-        min-width: 12;
-        height: 3;
-        margin: 0;
     }
 
     .error-banner {
@@ -511,9 +724,30 @@ class TunnitupApp(App[None]):
     .pane-heading {
         height: 3;
         padding: 0 1;
-        background: #172332;
+        background: #101721;
+        color: #9fc0e5;
         border-bottom: solid #34465c;
+        align-vertical: middle;
+    }
+
+    #route-heading, #traffic-heading {
+        width: 1fr;
         content-align: left middle;
+    }
+
+    #request-rate {
+        width: 16;
+        text-align: right;
+        content-align: right middle;
+    }
+
+    #add-route {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        margin: 0;
+        background: #171f2b;
+        border: solid #5d7390;
     }
 
     DataTable {
@@ -531,6 +765,38 @@ class TunnitupApp(App[None]):
         background: #1863a9;
         color: #ffffff;
     }
+
+    #keybar {
+        height: 3;
+        padding: 0 1;
+        background: #1d2b3b;
+        color: #9fc0e5;
+        border-top: solid #34465c;
+        content-align: left middle;
+    }
+
+    RouteEditorScreen {
+        align: center middle;
+        background: #000000 50%;
+    }
+
+    #route-editor {
+        width: 58;
+        height: auto;
+        padding: 1 2;
+        background: #1d2836;
+        border: solid #5d7390;
+    }
+
+    .modal-title {
+        color: #9fc8ef;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    .field-label {
+        color: #9aa8ba;
+    }
     """
 
     def __init__(
@@ -546,6 +812,7 @@ class TunnitupApp(App[None]):
         self.runtime_state = "stopped"
         self.runtime_error: str | None = None
         self.tunnel: Tunnel | None = None
+        self.online_since: float | None = None
         self.runtime_worker: Worker[None] | None = None
 
     def on_mount(self) -> None:
@@ -579,6 +846,7 @@ class TunnitupApp(App[None]):
 
             def on_ready(tunnel: Tunnel) -> None:
                 self.tunnel = tunnel
+                self.online_since = monotonic()
                 self.runtime_state = "online"
                 self.refresh_command_center()
 
@@ -602,6 +870,7 @@ class TunnitupApp(App[None]):
             if self.runtime_state not in {"error"}:
                 self.runtime_state = "stopped"
             self.tunnel = None
+            self.online_since = None
             self.refresh_command_center()
 
     def refresh_command_center(self) -> None:

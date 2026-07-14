@@ -12,6 +12,7 @@ from tunnitup.tui import (
     PathsScreen,
     PortsScreen,
     PreviewScreen,
+    RouteEditorScreen,
     TuiRuntime,
     TunnitupApp,
 )
@@ -60,7 +61,10 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         assert app.screen.query_one("#routes-table", DataTable).row_count == 1
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
         assert "STOPPED" in str(app.screen.query_one("#runtime-state", Static).render())
-        assert app.screen.query_one("#command-bar", Horizontal).region.height == 3
+        assert app.screen.query_one("#command-topbar", Horizontal).region.height == 4
+        assert app.screen.query_one("#live-strip", Horizontal).region.height == 3
+        assert not app.screen.query_one("#routes-table", DataTable).show_header
+        assert "enter" in str(app.screen.query_one("#keybar", Static).render())
         routes_width = app.screen.query_one("#routes-panel", Vertical).region.width
         requests_width = app.screen.query_one("#requests-panel", Vertical).region.width
         assert routes_width < requests_width
@@ -74,7 +78,7 @@ def test_command_center_summarizes_known_ngrok_errors() -> None:
     )
 
     assert CommandCenterScreen._friendly_error(raw) == (
-        "Domain already online. Stop the other ngrok session, then press Start.  [dim]E: details[/]"
+        "Domain already online. Stop the other ngrok session, then press Start.  [dim]D: details[/]"
     )
 
 
@@ -100,3 +104,21 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
 
         assert app.runtime_state == "stopped"
         assert app.tunnel is None
+
+
+async def test_command_center_adds_a_route_while_stopped() -> None:
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+
+        assert isinstance(app.screen, RouteEditorScreen)
+        app.screen.query_one("#route-path", Input).value = "/api"
+        app.screen.query_one("#route-upstream", Input).value = "8000"
+        await pilot.click("#save")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandCenterScreen)
+        assert app.runtime is not None
+        assert {route.path for route in app.runtime.routes.routes} == {"/", "/api"}
