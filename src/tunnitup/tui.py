@@ -199,29 +199,38 @@ class CommandCenterScreen(TunnitupScreen):
     BINDINGS = [
         ("space", "toggle", "Start / stop"),
         ("r", "refresh", "Refresh"),
+        ("e", "error_details", "Error details"),
         ("q", "app.quit", "Quit"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Static("TUNNITUP   one domain, many local services", classes="topbar")
-        yield Static("", id="runtime-status")
-        with Horizontal(id="runtime-actions"):
+        with Horizontal(id="command-bar"):
+            yield Static("", id="runtime-state")
+            yield Static("", id="public-url")
+            yield Static("", id="runtime-meta")
             yield Button("Start", id="toggle", variant="primary")
-            yield Static("", id="runtime-error", classes="error")
+        yield Static("", id="runtime-error", classes="error-banner")
         with Horizontal(id="dashboard"):
-            with Vertical(classes="panel"):
-                yield Label("ROUTES", classes="panel-title")
+            with Vertical(id="routes-panel", classes="panel"):
+                yield Static("", id="route-heading", classes="pane-heading")
                 yield DataTable(id="routes-table", cursor_type="row")
-            with Vertical(classes="panel"):
-                yield Label("RECENT REQUESTS", classes="panel-title")
+            with Vertical(id="requests-panel", classes="panel"):
+                yield Static("", id="traffic-heading", classes="pane-heading")
                 yield DataTable(id="requests-table", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
         routes = self.query_one("#routes-table", DataTable)
-        routes.add_columns("Path", "Upstream", "Health")
+        routes.add_column("Path", width=12)
+        routes.add_column("Upstream", width=30)
+        routes.add_column("Health", width=18)
         requests = self.query_one("#requests-table", DataTable)
-        requests.add_columns("Time", "Method", "Path", "Status", "Duration")
+        requests.add_column("Time", width=9)
+        requests.add_column("Method", width=8)
+        requests.add_column("Path", width=32)
+        requests.add_column("Status", width=8)
+        requests.add_column("Duration", width=10)
         self.refresh_dashboard()
         self.observe()
 
@@ -238,6 +247,15 @@ class CommandCenterScreen(TunnitupScreen):
     def action_refresh(self) -> None:
         self.refresh_dashboard()
 
+    def action_error_details(self) -> None:
+        if self.tunnitup.runtime_error:
+            self.notify(
+                self.tunnitup.runtime_error,
+                title="Tunnel error",
+                severity="error",
+                timeout=10,
+            )
+
     @work(exclusive=True, exit_on_error=False)
     async def observe(self) -> None:
         async with self.tunnitup.observations.subscribe() as queue:
@@ -253,16 +271,22 @@ class CommandCenterScreen(TunnitupScreen):
         public = self.tunnitup.tunnel.public_url if self.tunnitup.tunnel else "not connected"
         state = self.tunnitup.runtime_state.upper()
         active = self.tunnitup.observations.active_requests
-        self.query_one("#runtime-status", Static).update(
-            f"[bold #4a9be8]{state}[/]   {public}   "
-            f"provider {runtime.tunnel.provider}   active {active}"
+        state_color = "#5ac8fa" if state == "ONLINE" else "#4a9be8"
+        if state == "ERROR":
+            state_color = "#ef8d84"
+        self.query_one("#runtime-state", Static).update(f"[bold {state_color}]● {state}[/]")
+        self.query_one("#public-url", Static).update(public)
+        self.query_one("#runtime-meta", Static).update(
+            f"provider {runtime.tunnel.provider}  ·  active {active}"
         )
         button = self.query_one("#toggle", Button)
         button.label = "Stop" if self.tunnitup.runtime_state in {"starting", "online"} else "Start"
         button.variant = (
             "error" if self.tunnitup.runtime_state in {"starting", "online"} else "primary"
         )
-        self.query_one("#runtime-error", Static).update(self.tunnitup.runtime_error or "")
+        error_banner = self.query_one("#runtime-error", Static)
+        error_banner.update(self._friendly_error(self.tunnitup.runtime_error))
+        error_banner.display = self.tunnitup.runtime_error is not None
 
         health = {item.route_path: item for item in self.tunnitup.observations.health}
         route_table = self.query_one("#routes-table", DataTable)
@@ -276,6 +300,11 @@ class CommandCenterScreen(TunnitupScreen):
             else:
                 state_text = result.error or f"unhealthy · {result.status}"
             route_table.add_row(route.path, str(route.upstream), state_text)
+        healthy_count = sum(item.healthy for item in health.values())
+        self.query_one("#route-heading", Static).update(
+            f"[bold #4a9be8]ROUTES[/]    "
+            f"[dim]{healthy_count}/{len(runtime.routes.routes)} healthy[/]"
+        )
 
         request_table = self.query_one("#requests-table", DataTable)
         request_table.clear()
@@ -287,6 +316,30 @@ class CommandCenterScreen(TunnitupScreen):
                 str(event.status),
                 f"{event.duration_ms:.0f} ms",
             )
+        self.query_one("#traffic-heading", Static).update(
+            f"[bold #4a9be8]RECENT REQUESTS[/]    "
+            f"[dim]{len(self.tunnitup.observations.requests)} captured[/]"
+        )
+
+    @staticmethod
+    def _friendly_error(error: str | None) -> str:
+        if error is None:
+            return ""
+        lowered = error.lower()
+        if "already online" in lowered:
+            return (
+                "Domain already online. Stop the other ngrok session, then press Start.  "
+                "[dim]E: details[/]"
+            )
+        if "authtoken" in lowered or "authentication" in lowered:
+            return (
+                "ngrok needs authentication. Run: ngrok config add-authtoken <token>  "
+                "[dim]E: details[/]"
+            )
+        if "not found on path" in lowered:
+            return "ngrok is not installed or is not on PATH.  [dim]E: details[/]"
+        first_line = next((line.strip() for line in error.splitlines() if line.strip()), error)
+        return f"{first_line[:140]}  [dim]E: details[/]"
 
 
 class TunnitupApp(App[None]):
@@ -399,30 +452,68 @@ class TunnitupApp(App[None]):
         border-bottom: solid #27394e;
     }
 
-    #runtime-status {
+    #command-bar {
         height: 3;
-        padding: 1 2;
+        padding: 0 2;
         background: #1d2b3b;
         border-bottom: solid #34465c;
+        align-vertical: middle;
     }
 
-    #runtime-actions {
-        height: 5;
-        padding: 1 2;
-        border-bottom: solid #34465c;
+    #runtime-state {
+        width: 18;
+        text-overflow: ellipsis;
     }
 
-    #runtime-actions #runtime-error {
+    #public-url {
         width: 1fr;
-        margin-left: 2;
+        color: #77b7f2;
+        text-overflow: ellipsis;
+    }
+
+    #runtime-meta {
+        width: 34;
+        color: #91a4bb;
+        text-align: right;
+        margin-right: 2;
+        text-overflow: ellipsis;
+    }
+
+    #command-bar #toggle {
+        width: 12;
+        min-width: 12;
+        height: 3;
+        margin: 0;
+    }
+
+    .error-banner {
+        display: none;
+        height: 3;
+        max-height: 3;
+        padding: 0 2;
+        color: #ef8d84;
+        background: #2b202a;
+        border-bottom: solid #5f3b47;
+        text-overflow: ellipsis;
+        content-align: left middle;
     }
 
     #dashboard { height: 1fr; }
 
     .panel {
-        width: 1fr;
-        padding: 1;
+        padding: 0;
         border-right: solid #34465c;
+    }
+
+    #routes-panel { width: 36%; }
+    #requests-panel { width: 64%; }
+
+    .pane-heading {
+        height: 3;
+        padding: 0 1;
+        background: #172332;
+        border-bottom: solid #34465c;
+        content-align: left middle;
     }
 
     DataTable {

@@ -1,7 +1,8 @@
 import asyncio
 from typing import Any
 
-from textual.widgets import DataTable, Input
+from textual.containers import Horizontal, Vertical
+from textual.widgets import DataTable, Input, Static
 
 from tunnitup.discovery import ServiceProbe
 from tunnitup.providers.base import Tunnel
@@ -58,6 +59,23 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         assert isinstance(app.screen, CommandCenterScreen)
         assert app.screen.query_one("#routes-table", DataTable).row_count == 1
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
+        assert "STOPPED" in str(app.screen.query_one("#runtime-state", Static).render())
+        assert app.screen.query_one("#command-bar", Horizontal).region.height == 3
+        routes_width = app.screen.query_one("#routes-panel", Vertical).region.width
+        requests_width = app.screen.query_one("#requests-panel", Vertical).region.width
+        assert routes_width < requests_width
+        assert 0.32 <= routes_width / (routes_width + requests_width) <= 0.40
+
+
+def test_command_center_summarizes_known_ngrok_errors() -> None:
+    raw = (
+        "ngrok exited unexpectedly with code 1\n"
+        "ERROR: endpoint https://example.ngrok.app is already online"
+    )
+
+    assert CommandCenterScreen._friendly_error(raw) == (
+        "Domain already online. Stop the other ngrok session, then press Start.  [dim]E: details[/]"
+    )
 
 
 async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> None:
