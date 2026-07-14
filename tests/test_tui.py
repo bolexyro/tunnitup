@@ -69,7 +69,7 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         assert topbar.region.width == 120
         assert app.screen.query_one("#live-strip", Horizontal).region.height == 2
         assert not app.screen.query("#add-route")
-        assert "enter" in str(app.screen.query_one("#keybar", Static).render())
+        assert "start/stop" in str(app.screen.query_one("#keybar", Static).render())
         routes_panel = app.screen.query_one("#routes-panel", Vertical)
         routes_width = routes_panel.region.width
         assert route_list.region.width >= routes_width - 1
@@ -101,6 +101,63 @@ async def test_command_center_clears_captured_traffic() -> None:
 
         assert app.observations.requests == ()
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
+
+
+async def test_command_center_filters_traffic_as_route_highlight_moves() -> None:
+    routes = RouteTable([Route.parse("/=3000"), Route.parse("/api=8000")])
+    app = TunnitupApp(TuiRuntime(routes=routes))
+    now = datetime.now(UTC)
+    for path, route_path in (("/home", "/"), ("/api/users", "/api")):
+        app.observations.record(
+            RequestEvent(
+                timestamp=now,
+                method="GET",
+                path=path,
+                route_path=route_path,
+                upstream="http://127.0.0.1:3000",
+                status=200,
+                duration_ms=1,
+            )
+        )
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        table = app.screen.query_one("#requests-table", DataTable)
+        assert table.get_row_at(0)[3] == "/home"
+
+        app.screen.query_one("#routes-list", OptionList).highlighted = 1
+        await pilot.pause()
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[3] == "/api/users"
+
+
+async def test_command_center_moves_active_traffic_marker() -> None:
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
+    for index in range(2):
+        app.observations.record(
+            RequestEvent(
+                timestamp=datetime.now(UTC),
+                method="GET",
+                path=f"/{index}",
+                route_path="/",
+                upstream="http://127.0.0.1:3000",
+                status=200,
+                duration_ms=1,
+            )
+        )
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        table = app.screen.query_one("#requests-table", DataTable)
+        assert table.get_row_at(0)[0] == "▶"
+
+        await pilot.press("right", "down")
+        await pilot.pause()
+
+        assert table.has_focus
+        assert table.get_row_at(0)[0] == ""
+        assert table.get_row_at(1)[0] == "▶"
 
 
 async def test_command_center_animates_the_starting_state() -> None:
@@ -170,7 +227,7 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
         assert app.tunnel is not None
         assert app.tunnel.public_url == "https://public.test"
 
-        app.screen.action_toggle()
+        await pilot.press("s")
         await pilot.pause(0.05)
 
         assert app.runtime_state == "stopped"

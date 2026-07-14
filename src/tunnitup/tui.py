@@ -14,6 +14,7 @@ from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
@@ -255,8 +256,9 @@ class RouteEditorScreen(ModalScreen[Route | None]):
 
 class CommandCenterScreen(TunnitupScreen):
     BINDINGS = [
-        Binding("space", "toggle", show=False),
-        Binding("enter", "inspect_route", show=False),
+        Binding("s,space", "toggle", show=False),
+        Binding("right", "focus_traffic", show=False, priority=True),
+        Binding("left", "focus_routes", show=False, priority=True),
         Binding("a", "add_route", show=False),
         Binding("e", "edit_route", show=False),
         Binding("c", "copy_url", show=False),
@@ -288,20 +290,22 @@ class CommandCenterScreen(TunnitupScreen):
                 yield DataTable(
                     id="requests-table",
                     cursor_type="row",
-                    show_cursor=False,
+                    show_cursor=True,
                     header_height=1,
                 )
         yield Static(
-            "[bold #9fc8ef]↑↓[/] route    [bold #9fc8ef]enter[/] inspect    "
+            "[bold #9fc8ef]↑↓[/] navigate    [bold #9fc8ef]←→[/] routes/traffic    "
             "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
             "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]x[/] clear    "
-            "[bold #9fc8ef]?[/] help",
+            "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]?[/] help",
             id="keybar",
         )
 
     def on_mount(self) -> None:
         self._starting_frame = 0
+        self._traffic_route_path: str | None = None
         requests = self.query_one("#requests-table", DataTable)
+        self._traffic_marker_column = requests.add_column("", width=2)
         requests.add_column("Time", width=9)
         requests.add_column("Method", width=8)
         self._traffic_path_column = requests.add_column("Path", width=32)
@@ -320,9 +324,15 @@ class CommandCenterScreen(TunnitupScreen):
         if event.button.id == "toggle":
             self.action_toggle()
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    def on_option_list_option_highlighted(
+        self, event: OptionList.OptionHighlighted
+    ) -> None:
         if event.option_list.id == "routes-list":
-            self.action_inspect_route()
+            self._refresh_traffic()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id == "requests-table":
+            self._refresh_traffic_markers(event.data_table)
 
     def action_toggle(self) -> None:
         if self.tunnitup.runtime_state in {"starting", "online"}:
@@ -354,16 +364,13 @@ class CommandCenterScreen(TunnitupScreen):
         if selected is not None:
             self.app.push_screen(RouteEditorScreen(selected), self._replace_route)
 
-    def action_inspect_route(self) -> None:
-        selected = self._selected_route()
-        if selected is None:
-            return
-        public = self.tunnitup.tunnel.public_url if self.tunnitup.tunnel else "PUBLIC DOMAIN"
-        self.notify(
-            f"{public.rstrip('/')}{selected.path}  →  {self._display_upstream(selected)}",
-            title=f"Route {selected.path}",
-            timeout=2.5,
-        )
+    def action_focus_traffic(self) -> None:
+        table = self.query_one("#requests-table", DataTable)
+        if table.row_count:
+            table.focus()
+
+    def action_focus_routes(self) -> None:
+        self.query_one("#routes-list", OptionList).focus()
 
     def action_copy_url(self) -> None:
         if self.tunnitup.tunnel is None:
@@ -385,8 +392,8 @@ class CommandCenterScreen(TunnitupScreen):
 
     def action_help(self) -> None:
         self.notify(
-            "↑↓ select · Enter inspect · A add · E edit · C copy URL · "
-            "X clear traffic · Space start/stop · Q quit",
+            "↑↓ navigate · ←→ switch pane · A add · E edit · C copy URL · "
+            "X clear traffic · S start/stop · Q quit",
             title="Keyboard controls",
             timeout=3,
         )
@@ -504,10 +511,24 @@ class CommandCenterScreen(TunnitupScreen):
             f"ROUTES  {healthy_count}/{len(runtime.routes.routes)} HEALTHY"
         )
 
+        self._refresh_traffic()
+
+    def _refresh_traffic(self) -> None:
         request_table = self.query_one("#requests-table", DataTable)
+        selected = self._selected_route()
+        selected_path = selected.path if selected is not None else None
+        route_changed = selected_path != self._traffic_route_path
+        cursor_row = 0 if route_changed else request_table.cursor_row
+        self._traffic_route_path = selected_path
+        events = [
+            event
+            for event in self.tunnitup.observations.requests
+            if event.route_path == selected_path
+        ][-100:]
         request_table.clear()
-        for event in reversed(self.tunnitup.observations.requests[-100:]):
+        for index, event in enumerate(reversed(events)):
             request_table.add_row(
+                "▶" if index == cursor_row else "",
                 event.timestamp.astimezone().strftime("%H:%M:%S"),
                 self._method_cell(event.method),
                 event.path,
@@ -515,14 +536,23 @@ class CommandCenterScreen(TunnitupScreen):
                 f"{event.duration_ms:.0f}ms",
                 height=1,
             )
+        if request_table.row_count:
+            request_table.move_cursor(row=min(cursor_row, request_table.row_count - 1))
         cutoff = datetime.now(UTC) - timedelta(minutes=1)
-        rate = sum(event.timestamp >= cutoff for event in self.tunnitup.observations.requests)
+        rate = sum(event.timestamp >= cutoff for event in events)
         self.query_one("#request-rate", Static).update(f"{rate} REQ/MIN")
+
+    def _refresh_traffic_markers(self, table: DataTable) -> None:
+        for row_index in range(table.row_count):
+            table.update_cell_at(
+                Coordinate(row_index, 0),
+                "▶" if row_index == table.cursor_row else "",
+            )
 
     def _resize_traffic_columns(self) -> None:
         table = self.query_one("#requests-table", DataTable)
-        fixed_columns = 9 + 8 + 8 + 10
-        cell_padding = table.cell_padding * 2 * 5
+        fixed_columns = 2 + 9 + 8 + 8 + 10
+        cell_padding = table.cell_padding * 2 * 6
         path_width = max(24, table.size.width - fixed_columns - cell_padding - 1)
         column = table.columns[self._traffic_path_column]
         if column.width != path_width:

@@ -90,8 +90,10 @@ async def _session_context(app: web.Application) -> AsyncIterator[None]:
         cookie_jar=aiohttp.DummyCookieJar(),
         trust_env=False,
     )
-    yield
-    await app[SESSION_KEY].close()
+    try:
+        yield
+    finally:
+        await app[SESSION_KEY].close()
 
 
 async def handle_request(request: web.Request) -> web.StreamResponse:
