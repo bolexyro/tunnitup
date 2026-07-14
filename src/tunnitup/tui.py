@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, Select, Static
@@ -76,41 +76,47 @@ class LaunchScreen(ModalScreen[LaunchOptions | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="launch-editor"):
             yield Static("START TUNNITUP", classes="modal-title")
-            yield Static("Choose a provider and the mappings to expose.", classes="modal-copy")
-            yield Label("Tunnel provider", classes="field-label")
-            yield Select(
-                [("ngrok", "ngrok")], value=self.runtime.tunnel.provider, id="launch-provider"
-            )
-            yield Label("Static domain or URL (optional)", classes="field-label")
-            yield Input(
-                value=self.runtime.tunnel.url or "",
-                placeholder="my-domain.ngrok-free.app",
-                id="launch-url",
-            )
-            yield Label("Local proxy port", classes="field-label")
-            yield Input(value=str(self.runtime.port), id="launch-port", type="integer")
-            yield Label("Saved mappings", classes="field-label")
-            with Vertical(id="launch-mappings"):
-                if not self.mappings:
-                    yield Static(
-                        "No saved mappings yet. Starting empty is allowed.",
-                        classes="modal-copy",
-                    )
-                for index, mapping in enumerate(self.mappings):
-                    route = mapping.route
-                    target = CommandCenterScreen._display_upstream(route)
-                    yield Checkbox(
-                        f"{mapping.name}   {route.path} → {target}",
-                        value=mapping.name in self.selected_names,
-                        id=f"launch-mapping-{index}",
-                    )
-            yield Static("", id="launch-error", classes="error")
+            with VerticalScroll(id="launch-fields"):
+                yield Static(
+                    "Choose a provider and the mappings to expose.",
+                    classes="modal-copy",
+                )
+                yield Label("Tunnel provider", classes="field-label")
+                yield Select(
+                    [("ngrok", "ngrok"), ("outray", "outray")],
+                    value=self.runtime.tunnel.provider,
+                    id="launch-provider",
+                )
+                yield Label("Static domain or URL (optional)", classes="field-label")
+                yield Input(
+                    value=self.runtime.tunnel.url or "",
+                    placeholder="your permanent tunnel domain",
+                    id="launch-url",
+                )
+                yield Label("Local proxy port", classes="field-label")
+                yield Input(value=str(self.runtime.port), id="launch-port", type="integer")
+                yield Label("Saved mappings", classes="field-label")
+                with Vertical(id="launch-mappings"):
+                    if not self.mappings:
+                        yield Static(
+                            "No saved mappings yet. Starting empty is allowed.",
+                            classes="modal-copy",
+                        )
+                    for index, mapping in enumerate(self.mappings):
+                        route = mapping.route
+                        target = CommandCenterScreen._display_upstream(route)
+                        yield Checkbox(
+                            f"{mapping.name}   {route.path} → {target}",
+                            value=mapping.name in self.selected_names,
+                            id=f"launch-mapping-{index}",
+                        )
+                yield Static("", id="launch-error", classes="error")
             with Horizontal(classes="actions"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Start", id="launch", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#launch-url", Input).focus()
+        self.query_one("#launch-provider", Select).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -189,6 +195,11 @@ class RouteEditorScreen(ModalScreen[SavedMapping | None]):
     def on_mount(self) -> None:
         self.query_one("#route-name", Input).focus()
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "route-path" and self.mapping is None:
+            path = event.value.strip().rstrip("/") or "/"
+            self.query_one("#route-strip-prefix", Checkbox).value = path != "/"
+
     def on_input_submitted(self, _: Input.Submitted) -> None:
         self.action_save()
 
@@ -213,6 +224,39 @@ class RouteEditorScreen(ModalScreen[SavedMapping | None]):
             self.query_one("#route-error", Static).update(str(exc))
             return
         self.dismiss(mapping)
+
+
+class ConfirmDeleteScreen(ModalScreen[bool]):
+    """Confirm removal from the persistent mapping catalog."""
+
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    def __init__(self, mapping: SavedMapping) -> None:
+        super().__init__()
+        self.mapping = mapping
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-delete"):
+            yield Static("REMOVE SAVED MAPPING?", classes="modal-title")
+            yield Static(
+                f"{self.mapping.name}   {self.mapping.route.path} → "
+                f"{CommandCenterScreen._display_upstream(self.mapping.route)}",
+                classes="modal-copy",
+            )
+            yield Static(
+                "This removes the saved entry only. It does not stop the local service.",
+                classes="modal-copy",
+            )
+            with Horizontal(classes="actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Remove", id="confirm-remove", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-remove")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
 
 class TrafficTable(DataTable):
     """A log table whose marker updates with the native cursor, without event lag."""
@@ -402,14 +446,17 @@ class CommandCenterScreen(TunnitupScreen):
         if not self._routes_are_editable():
             return
         selected = self._selected_mapping()
-        if selected is None:
-            return
+        if selected is not None:
+            self.app.push_screen(
+                ConfirmDeleteScreen(selected),
+                lambda confirmed: self._delete_mapping(selected.name) if confirmed else None,
+            )
+
+    def _delete_mapping(self, name: str) -> None:
         try:
-            self.tunnitup.delete_mapping(selected.name)
+            self.tunnitup.delete_mapping(name)
             selected_names = tuple(
-                name
-                for name in self.tunnitup.selected_mapping_names
-                if name != selected.name
+                selected for selected in self.tunnitup.selected_mapping_names if selected != name
             )
             routes = self.tunnitup.routes_for(selected_names)
         except (MappingStoreError, RouteConfigurationError) as exc:
@@ -418,8 +465,9 @@ class CommandCenterScreen(TunnitupScreen):
         self.tunnitup.selected_mapping_names = selected_names
         if self.tunnitup.runtime is not None:
             self.tunnitup.runtime = replace(self.tunnitup.runtime, routes=routes)
-        self.notify(f"Removed {selected.name}.", timeout=1.5)
+        self.notify(f"Removed {name}.", timeout=1.5)
         self.refresh_dashboard()
+
     def action_focus_traffic(self) -> None:
         table = self.query_one("#requests-table", DataTable)
         if table.row_count:
@@ -513,8 +561,7 @@ class CommandCenterScreen(TunnitupScreen):
         )
         try:
             candidate_mappings = tuple(
-                mapping if item.name == selected.name else item
-                for item in self.tunnitup.mappings
+                mapping if item.name == selected.name else item for item in self.tunnitup.mappings
             )
             routes = self.tunnitup.routes_for(selected_names, mappings=candidate_mappings)
             self.tunnitup.replace_mapping(selected.name, mapping)
@@ -590,9 +637,7 @@ class CommandCenterScreen(TunnitupScreen):
             route = mapping.route
             result = health.get(route.path) if mapping.name in active_names else None
             state_text = self._health_indicator(result, active=mapping.name in active_names)
-            route_list.add_option(
-                Option(self._route_row(mapping, state_text), id=mapping.name)
-            )
+            route_list.add_option(Option(self._route_row(mapping, state_text), id=mapping.name))
         mapping_names = [mapping.name for mapping in sorted_mappings]
         if mapping_names:
             route_list.highlighted = (
@@ -776,9 +821,14 @@ class CommandCenterScreen(TunnitupScreen):
         if error is None:
             return ""
         lowered = error.lower()
+        if "outray" in lowered:
+            if "not found on path" in lowered:
+                return "Outray is not installed. Run: npm install -g outray  [dim]D: details[/]"
+            if "not authenticated" in lowered or "unauthorized" in lowered or "login" in lowered:
+                return "Outray needs authentication. Run: outray login  [dim]D: details[/]"
         if "already online" in lowered:
             return (
-                "Domain already online. Stop the other ngrok session, then press Start.  "
+                "Domain already online. Stop the other tunnel session, then press Start.  "
                 "[dim]D: details[/]"
             )
         if "authtoken" in lowered or "authentication" in lowered:
@@ -1038,19 +1088,39 @@ class TunnitupApp(App[None]):
         content-align: left middle;
     }
 
-    RouteEditorScreen, LaunchScreen {
+    RouteEditorScreen, LaunchScreen, ConfirmDeleteScreen {
         align: center middle;
         background: #000000 50%;
     }
 
     #route-editor, #launch-editor {
         width: 58;
-        height: auto;
         padding: 1 2;
         background: #1d2836;
         border: solid #5d7390;
     }
 
+    #route-editor {
+        height: auto;
+    }
+
+    #launch-editor {
+        height: 90%;
+        max-height: 42;
+    }
+
+    #launch-fields {
+        height: 1fr;
+        scrollbar-size: 1 1;
+    }
+
+    #confirm-delete {
+        width: 58;
+        height: auto;
+        padding: 1 2;
+        background: #1d2836;
+        border: solid #5d7390;
+    }
     .modal-title {
         color: #9fc8ef;
         text-style: bold;
@@ -1074,7 +1144,7 @@ class TunnitupApp(App[None]):
 
     #launch-mappings {
         height: auto;
-        max-height: 10;
+        max-height: 16;
         margin-bottom: 1;
         padding: 0 1;
         border: solid #34465c;
@@ -1161,9 +1231,7 @@ class TunnitupApp(App[None]):
             for item in self.mappings
         ):
             raise MappingStoreError(f"mapping name {mapping.name!r} already exists")
-        updated = tuple(
-            mapping if item.name == old_name else item for item in self.mappings
-        )
+        updated = tuple(mapping if item.name == old_name else item for item in self.mappings)
         if self.mapping_store is not None:
             self.mapping_store.save(updated)
         self.mappings = updated
@@ -1175,6 +1243,7 @@ class TunnitupApp(App[None]):
         if self.mapping_store is not None:
             self.mapping_store.save(updated)
         self.mappings = updated
+
     def on_mount(self) -> None:
         if self.runtime is None:
             self.runtime = TuiRuntime(routes=RouteTable([]))
@@ -1234,8 +1303,9 @@ class TunnitupApp(App[None]):
                 self.runtime_state = "stopped"
             self.tunnel = None
             self.online_since = None
+            self.runtime_worker = None
             self.refresh_command_center()
 
     def refresh_command_center(self) -> None:
-        if isinstance(self.screen, CommandCenterScreen):
+        if self.screen_stack and isinstance(self.screen, CommandCenterScreen):
             self.screen.refresh_dashboard()

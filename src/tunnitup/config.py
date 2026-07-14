@@ -136,8 +136,8 @@ def _parse_tunnel(raw: Any) -> TunnelSettings:
     _reject_unknown_keys(raw, {"provider", "url", "startup_timeout"}, "[tunnel]")
 
     provider = raw.get("provider", "ngrok")
-    if not isinstance(provider, str) or provider != "ngrok":
-        raise ConfigurationError("tunnel.provider must currently be 'ngrok'")
+    if not isinstance(provider, str) or provider not in {"ngrok", "outray"}:
+        raise ConfigurationError("tunnel.provider must be 'ngrok' or 'outray'")
 
     url = raw.get("url")
     if url is not None:

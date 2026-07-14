@@ -64,8 +64,8 @@ def test_starter_config_is_valid_and_can_include_an_api(tmp_path: Path) -> None:
         ('[proxy]\nporrt = 8080\n[routes]\n"/" = 3000', "unknown field"),
         ('unexpected = true\n[routes]\n"/" = 3000', "unknown field"),
         (
-            '[tunnel]\nprovider = "outray"\n[routes]\n"/" = 3000',
-            "currently be 'ngrok'",
+            '[tunnel]\nprovider = "cloudflare"\n[routes]\n"/" = 3000',
+            "must be 'ngrok' or 'outray'",
         ),
         (
             '[tunnel]\nurl = "http://example.ngrok.app/path"\n[routes]\n"/" = 3000',
@@ -93,3 +93,23 @@ def test_configuration_errors_are_actionable(
 def test_missing_config_suggests_init(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="tunnitup init"):
         load_config(tmp_path / "missing.toml")
+
+
+def test_loads_outray_provider(tmp_path: Path) -> None:
+    path = tmp_path / "tunnitup.toml"
+    path.write_text(
+        """
+[tunnel]
+provider = "outray"
+url = "https://my-app.tunnel.outray.app"
+
+[routes]
+"/" = 3000
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.tunnel.provider == "outray"
+    assert config.tunnel.url == "https://my-app.tunnel.outray.app"

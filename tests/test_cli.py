@@ -155,21 +155,26 @@ def test_up_starts_proxy_and_provider_with_one_command(monkeypatch: Any) -> None
             provider=provider,
             public_url=kwargs["public_url"],
         )
-        kwargs["on_ready"](Tunnel("ngrok", "https://stable.ngrok.app", "http://127.0.0.1:8080"))
+        kwargs["on_ready"](Tunnel("outray", "https://stable.outray.app", "http://127.0.0.1:8080"))
 
-    monkeypatch.setattr("tunnitup.cli.create_provider", lambda _name: fake_provider)
+    def fake_create_provider(name: str) -> object:
+        captured["provider_name"] = name
+        return fake_provider
+
+    monkeypatch.setattr("tunnitup.cli.create_provider", fake_create_provider)
     monkeypatch.setattr("tunnitup.cli.run_proxy_with_tunnel", fake_run)
 
     result = runner.invoke(
         app,
-        ["up", "3000", "--url", "https://stable.ngrok.app"],
+        ["up", "3000", "--provider", "outray", "--url", "https://stable.outray.app"],
     )
 
     assert result.exit_code == 0
     assert "Tunnitup is online" in result.output
-    assert "https://stable.ngrok.app" in result.output
+    assert "https://stable.outray.app" in result.output
     assert captured["provider"] is fake_provider
-    assert captured["public_url"] == "https://stable.ngrok.app"
+    assert captured["public_url"] == "https://stable.outray.app"
+    assert captured["provider_name"] == "outray"
     assert captured["routes"].match("/").upstream.port == 3000
 
 

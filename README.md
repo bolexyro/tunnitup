@@ -36,6 +36,18 @@ Use `tunnitup init --force` only when you intentionally want to replace an exist
 
 The command starts the local proxy, starts ngrok, discovers the matching public URL through ngrok's local Agent API, and stops both processes together when you press `Ctrl+C`.
 
+Outray is supported as a second provider. Install its CLI with `npm install -g outray`, authenticate once with `outray login`, then select it in the TUI or run:
+
+```powershell
+tunnitup up 3000 --provider outray
+```
+
+For a reserved Outray hostname, pass the complete URL. Tunnitup recognizes both `https://my-app.tunnel.outray.app` and the CLI's current `https://my-app.outray.app` form as reserved subdomains and converts them to Outray's `--subdomain my-app` option; other HTTPS hostnames use `--domain`:
+
+```powershell
+tunnitup up 3000 --provider outray --url https://my-app.tunnel.outray.app
+```
+
 ## Terminal interface
 
 Open the terminal interface with:
@@ -48,7 +60,7 @@ The TUI always opens the command center. Press `A` to create a named, reusable m
 
 Saved mappings live in the user's configuration directory (`%APPDATA%\tunnitup\mappings.toml` on Windows and `$XDG_CONFIG_HOME/tunnitup/mappings.toml` on Unix-like systems). Set `TUNNITUP_CONFIG_HOME` to override that location. Existing routes loaded from `tunnitup.toml` are imported into the catalog automatically.
 
-The command center displays the public URL, active route health, saved mappings, and recent request outcomes. Press `S` or `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Ctrl+C` to quit. Launching still requires an installed and authenticated ngrok CLI.
+The command center displays the public URL, active route health, saved mappings, and recent request outcomes. Press `S` or `Space` to start or stop the proxy and tunnel, `R` to refresh, and `Ctrl+C` to quit. Launching requires the selected provider CLI on `PATH` and authenticated (`ngrok config add-authtoken` or `outray login`).
 
 ## Direct CLI usage
 

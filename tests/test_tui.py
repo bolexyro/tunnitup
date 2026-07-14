@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Checkbox, DataTable, Input, OptionList, Static
+from textual.widgets import Checkbox, DataTable, Input, OptionList, Select, Static
 
 from tunnitup.mappings import MappingStore, SavedMapping
 from tunnitup.observability import RequestEvent, RouteHealth
@@ -12,6 +12,7 @@ from tunnitup.providers.base import Tunnel
 from tunnitup.routing import Route, RouteTable
 from tunnitup.tui import (
     CommandCenterScreen,
+    ConfirmDeleteScreen,
     LaunchScreen,
     RouteEditorScreen,
     TuiRuntime,
@@ -208,7 +209,8 @@ def test_command_center_summarizes_known_ngrok_errors() -> None:
     )
 
     assert CommandCenterScreen._friendly_error(raw) == (
-        "Domain already online. Stop the other ngrok session, then press Start.  [dim]D: details[/]"
+        "Domain already online. Stop the other tunnel session, then press Start.  "
+        "[dim]D: details[/]"
     )
 
 
@@ -225,6 +227,7 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
         await pilot.click("#toggle")
         await pilot.pause()
         assert isinstance(app.screen, LaunchScreen)
+        app.screen.query_one("#launch-provider", Select).value = "outray"
         app.screen.query_one("#launch-url", Input).value = "public.test"
         await pilot.click("#launch")
         await pilot.pause(0.05)
@@ -232,6 +235,7 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
         assert app.runtime_state == "online"
         assert app.runtime is not None
         assert app.runtime.tunnel.url == "https://public.test"
+        assert app.runtime.tunnel.provider == "outray"
         assert app.tunnel is not None
         assert app.tunnel.public_url == "https://public.test"
 
@@ -240,6 +244,10 @@ async def test_command_center_starts_and_stops_the_runtime(monkeypatch: Any) -> 
 
         assert app.runtime_state == "stopped"
         assert app.tunnel is None
+        assert app.runtime_worker is None
+
+    app.stop_stack()
+    assert app.runtime_state == "stopped"
 
 
 async def test_command_center_adds_a_route_while_stopped() -> None:
@@ -305,6 +313,7 @@ async def test_ctrl_c_stops_the_runtime_before_exiting(monkeypatch: Any) -> None
         await asyncio.wait_for(stopped.wait(), timeout=1)
 
     assert app.runtime_state == "stopped"
+
 
 async def test_tui_imports_project_routes_into_global_mapping_store(tmp_path: Path) -> None:
     store = MappingStore(tmp_path / "mappings.toml")
@@ -373,3 +382,199 @@ def test_app_deletes_mapping_from_persistent_catalog(tmp_path: Path) -> None:
 
     assert tuple(mapping.name for mapping in app.mappings) == ("api",)
     assert store.load() == app.mappings
+
+
+def test_command_center_summarizes_outray_setup_errors() -> None:
+    assert CommandCenterScreen._friendly_error("Outray was not found on PATH").startswith(
+        "Outray is not installed"
+    )
+    assert CommandCenterScreen._friendly_error("Outray is not authenticated").startswith(
+        "Outray needs authentication"
+    )
+
+
+async def test_tui_add_edit_delete_round_trip_is_persistent(tmp_path: Path) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    app = TunnitupApp(mapping_store=store)
+
+    async with app.run_test(size=(110, 36)) as pilot:
+        await pilot.press("a")
+        await pilot.pause()
+        editor = app.screen
+        assert isinstance(editor, RouteEditorScreen)
+        editor.query_one("#route-name", Input).value = "billing-api"
+        editor.query_one("#route-path", Input).value = "/billing"
+        editor.query_one("#route-upstream", Input).value = "9000"
+        await pilot.click("#save")
+        await pilot.pause()
+
+        assert tuple(mapping.name for mapping in store.load()) == ("billing-api",)
+        assert store.load()[0].route.strip_prefix is True
+
+        await pilot.press("e")
+        await pilot.pause()
+        editor = app.screen
+        assert isinstance(editor, RouteEditorScreen)
+        editor.query_one("#route-upstream", Input).value = "9001"
+        await pilot.click("#save")
+        await pilot.pause()
+
+        assert store.load()[0].route.upstream.port == 9001
+
+        await pilot.press("delete")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmDeleteScreen)
+        await pilot.click("#cancel")
+        await pilot.pause()
+        assert tuple(mapping.name for mapping in store.load()) == ("billing-api",)
+
+        await pilot.press("delete")
+        await pilot.pause()
+        await pilot.click("#confirm-remove")
+        await pilot.pause()
+
+        assert store.load() == ()
+        assert app.mappings == ()
+
+
+async def test_tui_launches_selected_saved_mappings_with_outray(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    store.save(
+        (
+            SavedMapping("frontend", Route.parse("/=5173")),
+            SavedMapping("api", Route.parse("/api=8000", strip_prefix=True)),
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    async def fake_run(routes: RouteTable, *args: Any, **kwargs: Any) -> None:
+        captured["routes"] = routes
+        kwargs["on_ready"](Tunnel("outray", "https://public.outray.app", args[0]))
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "tunnitup.tui.create_provider",
+        lambda name: captured.setdefault("provider", name),
+    )
+    monkeypatch.setattr("tunnitup.tui.run_proxy_with_tunnel", fake_run)
+    app = TunnitupApp(mapping_store=store)
+
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+        launch = app.screen
+        assert isinstance(launch, LaunchScreen)
+        launch.query_one("#launch-provider", Select).value = "outray"
+        await pilot.click("#launch-mapping-0")
+        await pilot.click("#launch-mapping-1")
+        await pilot.click("#launch")
+        await pilot.pause(0.05)
+
+        assert app.runtime_state == "online"
+        assert captured["provider"] == "outray"
+        assert {route.path for route in captured["routes"].routes} == {"/", "/api"}
+        assert app.runtime is not None
+        assert app.runtime.tunnel.provider == "outray"
+
+        app.stop_stack()
+        await pilot.pause(0.05)
+
+
+async def test_launch_rejects_two_active_mappings_for_the_same_public_path(
+    tmp_path: Path,
+) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    store.save(
+        (
+            SavedMapping("shop-ui", Route.parse("/=3000")),
+            SavedMapping("admin-ui", Route.parse("/=5173")),
+        )
+    )
+    app = TunnitupApp(mapping_store=store)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+        launch = app.screen
+        assert isinstance(launch, LaunchScreen)
+        launch.query_one("#launch-mapping-0", Checkbox).value = True
+        launch.query_one("#launch-mapping-1", Checkbox).value = True
+        await pilot.click("#launch")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandCenterScreen)
+        assert app.runtime_state == "stopped"
+        assert app.runtime is not None
+        assert app.runtime.routes.routes == ()
+
+
+async def test_launch_modal_fits_small_terminal_and_scrolls_many_mappings(
+    tmp_path: Path,
+) -> None:
+    store = MappingStore(tmp_path / "mappings.toml")
+    store.save(
+        tuple(
+            SavedMapping(f"service-{index}", Route.parse(f"/service-{index}={8000 + index}"))
+            for index in range(15)
+        )
+    )
+    app = TunnitupApp(mapping_store=store)
+
+    async with app.run_test(size=(80, 28)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+
+        launch = app.screen
+        assert isinstance(launch, LaunchScreen)
+        editor = launch.query_one("#launch-editor")
+        mapping_list = launch.query_one("#launch-mappings")
+        assert editor.region.x >= 0
+        assert editor.region.y >= 0
+        assert editor.region.right <= launch.size.width
+        assert editor.region.bottom <= launch.size.height
+        assert mapping_list.region.height <= 16
+        assert mapping_list.virtual_size.height > mapping_list.region.height
+
+
+async def test_tui_surfaces_occupied_proxy_port(
+    monkeypatch: Any,
+) -> None:
+    listener = await asyncio.start_server(lambda _reader, _writer: None, "127.0.0.1", 0)
+    port = listener.sockets[0].getsockname()[1]
+
+    class FakeProvider:
+        name = "fake"
+
+        async def start(self, *_args: Any, **_kwargs: Any) -> Tunnel:
+            raise AssertionError("provider must not start when proxy port is occupied")
+
+        async def wait(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr("tunnitup.tui.create_provider", lambda _name: FakeProvider())
+    app = TunnitupApp(
+        TuiRuntime(
+            routes=RouteTable([Route.parse("/=3000")]),
+            port=port,
+        )
+    )
+
+    try:
+        async with app.run_test(size=(110, 36)) as pilot:
+            await pilot.press("s")
+            await pilot.pause()
+            await pilot.click("#launch")
+            await pilot.pause(0.1)
+
+            assert app.runtime_state == "error"
+            assert app.runtime_error is not None
+            assert f"Port {port} is already in use" in app.runtime_error
+    finally:
+        listener.close()
+        await listener.wait_closed()
