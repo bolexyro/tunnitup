@@ -9,6 +9,8 @@ from tunnitup.observability import ObservationStore
 from tunnitup.proxy import ProxySettings, create_proxy_app
 from tunnitup.routing import Route, RouteTable
 
+SERVICE_KEY = web.AppKey("service", str)
+
 
 @pytest.fixture
 async def upstream_server() -> AsyncIterator[TestServer]:
@@ -242,3 +244,64 @@ async def test_proxy_does_not_share_upstream_cookies_between_requests() -> None:
                 payload = await response.json()
 
     assert payload["cookie"] is None
+
+
+async def test_root_relative_request_stays_with_same_origin_referring_route() -> None:
+    async def identify(request: web.Request) -> web.Response:
+        return web.json_response({"service": request.app[SERVICE_KEY], "path": request.path})
+
+    frontend_app = web.Application()
+    frontend_app[SERVICE_KEY] = "frontend"
+    frontend_app.router.add_route("*", "/{path:.*}", identify)
+    backend_app = web.Application()
+    backend_app[SERVICE_KEY] = "backend"
+    backend_app.router.add_route("*", "/{path:.*}", identify)
+
+    async with TestServer(frontend_app) as frontend, TestServer(backend_app) as backend:
+        routes = RouteTable(
+            [
+                Route.parse(f"/={frontend.make_url('')}"),
+                Route.parse(f"/api={backend.make_url('')}", strip_prefix=True),
+            ]
+        )
+        observations = ObservationStore()
+        async with TestClient(
+            TestServer(create_proxy_app(routes, observations=observations))
+        ) as client:
+            response = await client.get(
+                "/v3/api-docs/swagger-config",
+                headers={"Referer": str(client.make_url("/api/swagger-ui/index.html"))},
+            )
+            payload = await response.json()
+
+    assert payload == {"service": "backend", "path": "/v3/api-docs/swagger-config"}
+    assert observations.requests[0].route_path == "/api"
+
+
+async def test_referrer_affinity_ignores_cross_origin_and_specific_direct_routes() -> None:
+    async def identify(request: web.Request) -> web.Response:
+        return web.Response(text=request.app[SERVICE_KEY])
+
+    frontend_app = web.Application()
+    frontend_app[SERVICE_KEY] = "frontend"
+    frontend_app.router.add_route("*", "/{path:.*}", identify)
+    backend_app = web.Application()
+    backend_app[SERVICE_KEY] = "backend"
+    backend_app.router.add_route("*", "/{path:.*}", identify)
+
+    async with TestServer(frontend_app) as frontend, TestServer(backend_app) as backend:
+        routes = RouteTable(
+            [Route.parse(f"/={frontend.make_url('')}"), Route.parse(f"/api={backend.make_url('')}")]
+        )
+        async with TestClient(TestServer(create_proxy_app(routes))) as client:
+            cross_origin = await client.get(
+                "/v3/api-docs", headers={"Referer": "https://untrusted.test/api/docs"}
+            )
+            specific = await client.get(
+                "/api/users", headers={"Referer": str(client.make_url("/"))}
+            )
+            cross_origin_text = await cross_origin.text()
+            specific_text = await specific.text()
+
+    assert cross_origin_text == "frontend"
+    assert specific_text == "backend"

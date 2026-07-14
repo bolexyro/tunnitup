@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
@@ -134,10 +134,11 @@ async def test_command_center_filters_traffic_as_route_highlight_moves() -> None
 
 async def test_command_center_moves_active_traffic_marker() -> None:
     app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
-    for index in range(2):
+    started = datetime.now(UTC)
+    for index in range(40):
         app.observations.record(
             RequestEvent(
-                timestamp=datetime.now(UTC),
+                timestamp=started + timedelta(milliseconds=index),
                 method="GET",
                 path=f"/{index}",
                 route_path="/",
@@ -150,14 +151,23 @@ async def test_command_center_moves_active_traffic_marker() -> None:
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.pause()
         table = app.screen.query_one("#requests-table", DataTable)
-        assert table.get_row_at(0)[0] == "▶"
+        assert table.get_row_at(0)[3] == "/0"
+        assert table.get_row_at(39)[3] == "/39"
+        assert table.get_row_at(39)[0] == "▶"
 
-        await pilot.press("right", "down")
+        await pilot.press("right", "home")
         await pilot.pause()
 
         assert table.has_focus
+        assert table.get_row_at(0)[0] == "▶"
+        assert table.get_row_at(39)[0] == ""
+
+        await pilot.press("end")
+        await pilot.pause()
+
         assert table.get_row_at(0)[0] == ""
-        assert table.get_row_at(1)[0] == "▶"
+        assert table.get_row_at(39)[0] == "▶"
+        assert table.scroll_y > 0
 
 
 async def test_command_center_animates_the_starting_state() -> None:

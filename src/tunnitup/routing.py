@@ -73,7 +73,7 @@ class Route:
         return request_path == self.path or request_path.startswith(f"{self.path}/")
 
     def forwarded_path(self, request_path: str) -> str:
-        if not self.strip_prefix or self.path == "/":
+        if not self.strip_prefix or self.path == "/" or not self.matches(request_path):
             return request_path
         return request_path[len(self.path) :] or "/"
 

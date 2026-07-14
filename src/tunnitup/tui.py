@@ -254,6 +254,47 @@ class RouteEditorScreen(ModalScreen[Route | None]):
         self.dismiss(route)
 
 
+class TrafficTable(DataTable):
+    """A log table whose marker updates with the native cursor, without event lag."""
+
+    BINDINGS = [
+        Binding("home", "first_log", show=False),
+        Binding("end", "last_log", show=False),
+    ]
+
+    def action_first_log(self) -> None:
+        if self.row_count:
+            self.move_cursor(row=0)
+
+    def action_last_log(self) -> None:
+        if self.row_count:
+            self.move_cursor(row=self.row_count - 1)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.action_cursor_up()
+        event.prevent_default()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self.action_cursor_down()
+        event.prevent_default()
+
+    def watch_cursor_coordinate(self, old: Coordinate, new: Coordinate) -> None:
+        super().watch_cursor_coordinate(old, new)
+        if not self.columns:
+            return
+        if old.row < self.row_count:
+            self.update_cell_at(Coordinate(old.row, 0), "")
+        if new.row < self.row_count:
+            self.update_cell_at(Coordinate(new.row, 0), "▶")
+
+    def sync_cursor_marker(self) -> None:
+        for row_index in range(self.row_count):
+            self.update_cell_at(
+                Coordinate(row_index, 0),
+                "▶" if row_index == self.cursor_row else "",
+            )
+
+
 class CommandCenterScreen(TunnitupScreen):
     BINDINGS = [
         Binding("s,space", "toggle", show=False),
@@ -287,7 +328,7 @@ class CommandCenterScreen(TunnitupScreen):
                 with Horizontal(classes="pane-heading"):
                     yield Static("RECENT TRAFFIC", id="traffic-heading")
                     yield Static("0 REQ/MIN", id="request-rate")
-                yield DataTable(
+                yield TrafficTable(
                     id="requests-table",
                     cursor_type="row",
                     show_cursor=True,
@@ -304,6 +345,7 @@ class CommandCenterScreen(TunnitupScreen):
     def on_mount(self) -> None:
         self._starting_frame = 0
         self._traffic_route_path: str | None = None
+        self._traffic_events: tuple[RequestEvent, ...] = ()
         requests = self.query_one("#requests-table", DataTable)
         self._traffic_marker_column = requests.add_column("", width=2)
         requests.add_column("Time", width=9)
@@ -329,10 +371,6 @@ class CommandCenterScreen(TunnitupScreen):
     ) -> None:
         if event.option_list.id == "routes-list":
             self._refresh_traffic()
-
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.data_table.id == "requests-table":
-            self._refresh_traffic_markers(event.data_table)
 
     def action_toggle(self) -> None:
         if self.tunnitup.runtime_state in {"starting", "online"}:
@@ -514,40 +552,75 @@ class CommandCenterScreen(TunnitupScreen):
         self._refresh_traffic()
 
     def _refresh_traffic(self) -> None:
-        request_table = self.query_one("#requests-table", DataTable)
+        request_table = self.query_one("#requests-table", TrafficTable)
         selected = self._selected_route()
         selected_path = selected.path if selected is not None else None
         route_changed = selected_path != self._traffic_route_path
-        cursor_row = 0 if route_changed else request_table.cursor_row
         self._traffic_route_path = selected_path
-        events = [
-            event
-            for event in self.tunnitup.observations.requests
-            if event.route_path == selected_path
-        ][-100:]
-        request_table.clear()
-        for index, event in enumerate(reversed(events)):
-            request_table.add_row(
-                "▶" if index == cursor_row else "",
-                event.timestamp.astimezone().strftime("%H:%M:%S"),
-                self._method_cell(event.method),
-                event.path,
-                self._status_cell(event.status),
-                f"{event.duration_ms:.0f}ms",
-                height=1,
-            )
-        if request_table.row_count:
-            request_table.move_cursor(row=min(cursor_row, request_table.row_count - 1))
+        events = tuple(
+            sorted(
+                (
+                    event
+                    for event in self.tunnitup.observations.requests
+                    if event.route_path == selected_path
+                ),
+                key=lambda event: event.timestamp,
+            )[-100:]
+        )
+        previous = self._traffic_events
+        was_following = bool(previous) and request_table.cursor_row == len(previous) - 1
+
+        if route_changed or not self._update_traffic_rows(request_table, previous, events):
+            request_table.clear()
+            for event in events:
+                self._add_traffic_row(request_table, event)
+            if events:
+                request_table.move_cursor(row=len(events) - 1)
+        elif was_following and events:
+            request_table.move_cursor(row=len(events) - 1)
+
+        self._traffic_events = events
+        request_table.sync_cursor_marker()
         cutoff = datetime.now(UTC) - timedelta(minutes=1)
         rate = sum(event.timestamp >= cutoff for event in events)
         self.query_one("#request-rate", Static).update(f"{rate} REQ/MIN")
 
-    def _refresh_traffic_markers(self, table: DataTable) -> None:
-        for row_index in range(table.row_count):
-            table.update_cell_at(
-                Coordinate(row_index, 0),
-                "▶" if row_index == table.cursor_row else "",
-            )
+    def _update_traffic_rows(
+        self,
+        table: TrafficTable,
+        previous: tuple[RequestEvent, ...],
+        current: tuple[RequestEvent, ...],
+    ) -> bool:
+        if current == previous:
+            return True
+        shift = next(
+            (
+                offset
+                for offset in range(len(previous) + 1)
+                if previous[offset:] == current[: len(previous) - offset]
+            ),
+            None,
+        )
+        if shift is None:
+            return False
+        for _ in range(shift):
+            row_key = table.coordinate_to_cell_key(Coordinate(0, 0)).row_key
+            table.remove_row(row_key)
+        for event in current[len(previous) - shift :]:
+            self._add_traffic_row(table, event)
+        return True
+
+    def _add_traffic_row(self, table: TrafficTable, event: RequestEvent) -> None:
+        table.add_row(
+            "",
+            event.timestamp.astimezone().strftime("%H:%M:%S"),
+            self._method_cell(event.method),
+            event.path,
+            self._status_cell(event.status),
+            f"{event.duration_ms:.0f}ms",
+            key=str(id(event)),
+            height=1,
+        )
 
     def _resize_traffic_columns(self) -> None:
         table = self.query_one("#requests-table", DataTable)

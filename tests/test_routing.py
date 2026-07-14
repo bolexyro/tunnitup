@@ -30,6 +30,7 @@ def test_strip_prefix_rewrites_only_the_matching_prefix() -> None:
     route = Route.parse("/api=http://localhost:8000/v1", strip_prefix=True)
 
     assert route.forwarded_path("/api/users") == "/users"
+    assert route.forwarded_path("/v3/api-docs") == "/v3/api-docs"
     assert str(route.target_url("/api/users", "active=true")) == (
         "http://localhost:8000/v1/users?active=true"
     )

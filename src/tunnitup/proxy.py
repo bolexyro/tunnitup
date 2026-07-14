@@ -8,9 +8,10 @@ from time import perf_counter
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, web
 from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from tunnitup.observability import ObservationStore, RequestEvent, display_upstream
-from tunnitup.routing import RouteTable
+from tunnitup.routing import Route, RouteTable
 
 HOP_BY_HOP_HEADERS = frozenset(
     {
@@ -109,13 +110,13 @@ async def handle_request(request: web.Request) -> web.StreamResponse:
 
 
 async def _handle_request(request: web.Request, started: float) -> web.StreamResponse:
-    route = request.app[ROUTES_KEY].match(request.path)
+    route = _select_route(request)
     if route is None:
         response = web.json_response(
             {"error": "no route configured for this path", "path": request.path},
             status=404,
         )
-        _record_request(request, started, status=404)
+        _record_request(request, started, route=route, status=404)
         return response
 
     target = route.target_url(request.path, request.query_string)
@@ -137,7 +138,9 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
             },
             status=504,
         )
-        _record_request(request, started, status=504, error="upstream timed out")
+        _record_request(
+            request, started, route=route, status=504, error="upstream timed out"
+        )
         return response
     except aiohttp.ClientError as exc:
         response = web.json_response(
@@ -149,7 +152,9 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
             },
             status=502,
         )
-        _record_request(request, started, status=502, error="upstream unavailable")
+        _record_request(
+            request, started, route=route, status=502, error="upstream unavailable"
+        )
         return response
 
     try:
@@ -162,7 +167,7 @@ async def _handle_request(request: web.Request, started: float) -> web.StreamRes
         async for chunk in upstream.content.iter_chunked(64 * 1024):
             await response.write(chunk)
         await response.write_eof()
-        _record_request(request, started, status=upstream.status)
+        _record_request(request, started, route=route, status=upstream.status)
         return response
     finally:
         upstream.release()
@@ -172,13 +177,13 @@ def _record_request(
     request: web.Request,
     started: float,
     *,
+    route: Route | None,
     status: int,
     error: str | None = None,
 ) -> None:
     observations = request.app[OBSERVATIONS_KEY]
     if observations is None:
         return
-    route = request.app[ROUTES_KEY].match(request.path)
     observations.record(
         RequestEvent(
             timestamp=datetime.now(UTC),
@@ -191,6 +196,33 @@ def _record_request(
             error=error,
         )
     )
+
+
+def _select_route(request: web.Request) -> Route | None:
+    """Prefer a more specific route from a same-origin referring page.
+
+    Some applications mounted below a prefix emit root-relative requests. A Swagger UI
+    served from /api, for example, may fetch /v3/api-docs. Direct path matching would
+    send that request to the catch-all / route, so retain affinity with /api when the
+    browser tells us that is where the request originated.
+    """
+    routes = request.app[ROUTES_KEY]
+    direct = routes.match(request.path)
+    if direct is None or direct.path != "/":
+        return direct
+
+    referer = request.headers.get("Referer")
+    if not referer:
+        return direct
+    try:
+        referring_url = URL(referer)
+    except ValueError:
+        return direct
+    if referring_url.authority != request.host:
+        return direct
+
+    referred = routes.match(referring_url.path)
+    return referred if referred is not None and referred.path != "/" else direct
 
 
 def create_proxy_app(
