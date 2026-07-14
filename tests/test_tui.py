@@ -57,7 +57,7 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         topbar = app.screen.query_one("#command-topbar", Horizontal)
         assert topbar.region.height == 4
         assert topbar.region.width == 120
-        assert app.screen.query_one("#live-strip", Horizontal).region.height == 2
+        assert app.screen.query_one("#live-strip", Horizontal).region.height == 3
         assert not app.screen.query("#add-route")
         assert "start/stop" in str(app.screen.query_one("#keybar", Static).render())
         routes_panel = app.screen.query_one("#routes-panel", Vertical)
@@ -179,6 +179,7 @@ async def test_command_center_animates_the_starting_state() -> None:
         assert "STARTING" in first
         assert first.count("•") == 14
         assert "\n" in first
+        assert screen.query_one("#runtime-state", Static).region.height == 2
         assert first_styles != second_styles
 
 
@@ -285,7 +286,7 @@ async def test_new_non_root_route_strips_its_public_prefix_by_default() -> None:
         assert str(route.target_url("/astropay-api/docs")) == "http://localhost:3009/docs"
 
 
-async def test_ctrl_q_stops_the_runtime_before_exiting(monkeypatch: Any) -> None:
+async def test_ctrl_c_stops_the_runtime_before_exiting(monkeypatch: Any) -> None:
     stopped = asyncio.Event()
 
     async def fake_run(*args: Any, **kwargs: Any) -> None:
@@ -304,7 +305,7 @@ async def test_ctrl_q_stops_the_runtime_before_exiting(monkeypatch: Any) -> None
         await pilot.pause(0.05)
         assert app.runtime_state == "online"
 
-        await pilot.press("ctrl+q")
+        await pilot.press("ctrl+c")
         await asyncio.wait_for(stopped.wait(), timeout=1)
 
     assert app.runtime_state == "stopped"

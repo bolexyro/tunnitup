@@ -255,7 +255,7 @@ class CommandCenterScreen(TunnitupScreen):
             "[bold #9fc8ef]↑↓[/] navigate    [bold #9fc8ef]←→[/] routes/traffic    "
             "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
             "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]x[/] clear    "
-            "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]ctrl+q[/] quit    "
+            "[bold #9fc8ef]s[/] start/stop    [bold #9fc8ef]ctrl+c[/] quit    "
             "[bold #9fc8ef]?[/] help",
             id="keybar",
         )
@@ -372,7 +372,7 @@ class CommandCenterScreen(TunnitupScreen):
     def action_help(self) -> None:
         self.notify(
             "↑↓ navigate · ←→ switch pane · A add · E edit · C copy URL · "
-            "X clear traffic · S start/stop · Q / Ctrl+Q quit",
+            "X clear traffic · S start/stop · Q / Ctrl+C quit",
             title="Keyboard controls",
             timeout=3,
         )
@@ -690,7 +690,7 @@ class CommandCenterScreen(TunnitupScreen):
 
 
 class TunnitupApp(App[None]):
-    BINDINGS = [Binding("ctrl+q", "quit_cleanly", show=False, priority=True)]
+    BINDINGS = [Binding("ctrl+c", "quit_cleanly", show=False, priority=True)]
     TITLE = "Tunnitup"
     SUB_TITLE = "one domain, many local services"
     CSS = """
@@ -823,7 +823,7 @@ class TunnitupApp(App[None]):
     }
 
     #live-strip {
-        height: 2;
+        height: 3;
         padding: 0 1;
         background: #101721;
         border-bottom: solid #34465c;
@@ -832,6 +832,7 @@ class TunnitupApp(App[None]):
 
     #runtime-state {
         width: 25;
+        height: 2;
         text-overflow: ellipsis;
     }
 
