@@ -5,6 +5,7 @@ import pytest
 from aiohttp import ClientSession, DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
 
+from tunnitup.observability import ObservationStore
 from tunnitup.proxy import ProxySettings, create_proxy_app
 from tunnitup.routing import Route, RouteTable
 
@@ -81,6 +82,41 @@ async def test_unavailable_upstream_returns_a_useful_502() -> None:
         payload = await response.json()
         assert payload["error"] == "upstream service is unavailable"
         assert payload["route"] == "/"
+
+
+async def test_records_completed_requests_for_observers(upstream_server: TestServer) -> None:
+    observations = ObservationStore()
+    routes = RouteTable([Route.parse(f"/api={upstream_server.make_url('')}")])
+
+    async with TestClient(
+        TestServer(create_proxy_app(routes, observations=observations))
+    ) as client:
+        response = await client.get("/api/users?token=secret")
+        await response.read()
+
+    event = observations.requests[-1]
+    assert event.method == "GET"
+    assert event.path == "/api/users"
+    assert event.route_path == "/api"
+    assert event.status == 200
+    assert event.duration_ms >= 0
+    assert event.error is None
+    assert observations.active_requests == 0
+
+
+async def test_records_proxy_failures_for_observers() -> None:
+    observations = ObservationStore()
+    routes = RouteTable([Route.parse("/=http://127.0.0.1:1")])
+
+    async with TestClient(
+        TestServer(create_proxy_app(routes, observations=observations))
+    ) as client:
+        response = await client.get("/")
+        await response.read()
+
+    event = observations.requests[-1]
+    assert event.status == 502
+    assert event.error == "upstream unavailable"
 
 
 async def test_streams_a_response_before_the_upstream_finishes() -> None:

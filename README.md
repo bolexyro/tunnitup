@@ -88,6 +88,12 @@ tunnitup proxy 3000 --connect-timeout 20 --response-timeout 120
 
 An unavailable upstream returns `502 Bad Gateway`; an upstream that exceeds a configured timeout returns `504 Gateway Timeout`. Pressing `Ctrl+C` gives active handlers a bounded graceful-shutdown window.
 
+## Observability core
+
+The proxy can publish bounded request-completion records, active-request counts, and current route-health results through an in-memory observation store. Query strings and upstream credentials are excluded from observations. Health checks probe only configured upstreams and do not scan arbitrary localhost ports.
+
+This API is independent of ngrok and aiohttp presentation concerns. It is the data source for terminal interfaces and other future consumers; those consumers cannot delay proxy requests, and slow subscribers receive the newest state instead of growing memory without bound.
+
 ## Development
 
 Use the development container so contributors do not need to install project dependencies on the host:

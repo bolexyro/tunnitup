@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import perf_counter
 
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, web
 from multidict import CIMultiDict, CIMultiDictProxy
 
+from tunnitup.observability import ObservationStore, RequestEvent, display_upstream
 from tunnitup.routing import RouteTable
 
 HOP_BY_HOP_HEADERS = frozenset(
@@ -25,6 +28,7 @@ HOP_BY_HOP_HEADERS = frozenset(
 SESSION_KEY: web.AppKey[ClientSession] = web.AppKey("upstream_session", ClientSession)
 ROUTES_KEY: web.AppKey[RouteTable] = web.AppKey("route_table", RouteTable)
 SETTINGS_KEY: web.AppKey[ProxySettings] = web.AppKey("proxy_settings")
+OBSERVATIONS_KEY: web.AppKey[ObservationStore | None] = web.AppKey("observations")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,12 +95,26 @@ async def _session_context(app: web.Application) -> AsyncIterator[None]:
 
 
 async def handle_request(request: web.Request) -> web.StreamResponse:
+    started = perf_counter()
+    observations = request.app[OBSERVATIONS_KEY]
+    if observations is not None:
+        observations.request_started()
+    try:
+        return await _handle_request(request, started)
+    finally:
+        if observations is not None:
+            observations.request_finished()
+
+
+async def _handle_request(request: web.Request, started: float) -> web.StreamResponse:
     route = request.app[ROUTES_KEY].match(request.path)
     if route is None:
-        return web.json_response(
+        response = web.json_response(
             {"error": "no route configured for this path", "path": request.path},
             status=404,
         )
+        _record_request(request, started, status=404)
+        return response
 
     target = route.target_url(request.path, request.query_string)
     try:
@@ -108,7 +126,7 @@ async def handle_request(request: web.Request) -> web.StreamResponse:
             allow_redirects=False,
         )
     except TimeoutError as exc:
-        return web.json_response(
+        response = web.json_response(
             {
                 "error": "upstream service timed out",
                 "route": route.path,
@@ -117,8 +135,10 @@ async def handle_request(request: web.Request) -> web.StreamResponse:
             },
             status=504,
         )
+        _record_request(request, started, status=504, error="upstream timed out")
+        return response
     except aiohttp.ClientError as exc:
-        return web.json_response(
+        response = web.json_response(
             {
                 "error": "upstream service is unavailable",
                 "route": route.path,
@@ -127,6 +147,8 @@ async def handle_request(request: web.Request) -> web.StreamResponse:
             },
             status=502,
         )
+        _record_request(request, started, status=502, error="upstream unavailable")
+        return response
 
     try:
         response = web.StreamResponse(
@@ -138,18 +160,46 @@ async def handle_request(request: web.Request) -> web.StreamResponse:
         async for chunk in upstream.content.iter_chunked(64 * 1024):
             await response.write(chunk)
         await response.write_eof()
+        _record_request(request, started, status=upstream.status)
         return response
     finally:
         upstream.release()
 
 
+def _record_request(
+    request: web.Request,
+    started: float,
+    *,
+    status: int,
+    error: str | None = None,
+) -> None:
+    observations = request.app[OBSERVATIONS_KEY]
+    if observations is None:
+        return
+    route = request.app[ROUTES_KEY].match(request.path)
+    observations.record(
+        RequestEvent(
+            timestamp=datetime.now(UTC),
+            method=request.method,
+            path=request.path,
+            route_path=route.path if route else None,
+            upstream=display_upstream(route.upstream) if route else None,
+            status=status,
+            duration_ms=(perf_counter() - started) * 1000,
+            error=error,
+        )
+    )
+
+
 def create_proxy_app(
     route_table: RouteTable,
     settings: ProxySettings | None = None,
+    observations: ObservationStore | None = None,
 ) -> web.Application:
     app = web.Application()
     app[ROUTES_KEY] = route_table
     app[SETTINGS_KEY] = settings or ProxySettings()
+    app[OBSERVATIONS_KEY] = observations
     app.cleanup_ctx.append(_session_context)
     app.router.add_route("*", "/{path_info:.*}", handle_request)
     return app
