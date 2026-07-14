@@ -489,10 +489,15 @@ class CommandCenterScreen(TunnitupScreen):
     def _refresh_runtime_state(self) -> None:
         state = self.tunnitup.runtime_state.upper()
         if state == "STARTING":
-            frames = ("▰▱▱", "▱▰▱", "▱▱▰", "▱▰▱")
-            frame = frames[self._starting_frame % len(frames)]
+            wave = ("⠁", "⠂", "⠄", "⡀", "⠄", "⠂")
+            phase = self._starting_frame % len(wave)
+            display = Text()
+            for index in range(7):
+                distance = (index - phase) % 7
+                color = "#5ac8fa" if distance == 0 else "#367fbe"
+                display.append(wave[(index + phase) % len(wave)], style=color)
+            display.append(" STARTING", style="bold #4a9be8")
             self._starting_frame += 1
-            display = Text(f"{frame} STARTING", style="bold #4a9be8")
         else:
             color = {
                 "ONLINE": "#5ac8fa",
@@ -875,7 +880,7 @@ class TunnitupApp(App[None]):
     }
 
     #runtime-state {
-        width: 12;
+        width: 18;
         text-overflow: ellipsis;
     }
 
