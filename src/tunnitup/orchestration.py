@@ -7,7 +7,7 @@ from aiohttp import web
 from tunnitup.observability import HealthMonitor, ObservationStore
 from tunnitup.providers import ProviderError, Tunnel, TunnelProvider
 from tunnitup.proxy import ProxySettings, create_proxy_app
-from tunnitup.routing import RouteTable
+from tunnitup.routing import RouteTable, validate_proxy_routes
 
 
 def local_tunnel_url(host: str, port: int) -> str:
@@ -30,6 +30,7 @@ async def run_proxy_with_tunnel(
     health_interval: float = 5.0,
     health_timeout: float = 2.0,
 ) -> None:
+    validate_proxy_routes(routes, host, port)
     health_monitor = (
         HealthMonitor(
             routes,

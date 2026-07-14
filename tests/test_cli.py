@@ -42,6 +42,23 @@ def test_timeout_options_reject_non_positive_values() -> None:
     assert "Invalid value" in result.output
 
 
+def test_proxy_rejects_an_upstream_on_its_own_listener() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "proxy",
+            "3000",
+            "--route",
+            "/api=8000",
+            "--port",
+            "8000",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "route '/api' points to Tunnitup's own proxy" in result.output
+
+
 def test_init_creates_a_valid_config_without_overwriting_it(
     tmp_path: Path,
     monkeypatch: Any,

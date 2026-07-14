@@ -8,7 +8,12 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tunnitup.proxy import ProxySettings
-from tunnitup.routing import Route, RouteConfigurationError, RouteTable
+from tunnitup.routing import (
+    Route,
+    RouteConfigurationError,
+    RouteTable,
+    validate_proxy_routes,
+)
 
 DEFAULT_CONFIG_PATH = Path("tunnitup.toml")
 
@@ -167,6 +172,10 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> TunnitupConfig:
     host, port, settings = _parse_proxy(raw.get("proxy"))
     tunnel = _parse_tunnel(raw.get("tunnel"))
     routes = _parse_routes(raw.get("routes"))
+    try:
+        validate_proxy_routes(routes, host, port)
+    except RouteConfigurationError as exc:
+        raise ConfigurationError(str(exc)) from exc
     return TunnitupConfig(
         source=path,
         host=host,

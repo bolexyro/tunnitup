@@ -1,7 +1,12 @@
 import pytest
 
 from tunnitup.cli import build_route_table
-from tunnitup.routing import Route, RouteConfigurationError, RouteTable
+from tunnitup.routing import (
+    Route,
+    RouteConfigurationError,
+    RouteTable,
+    validate_proxy_routes,
+)
 
 
 def test_port_shorthand_uses_localhost() -> None:
@@ -46,3 +51,28 @@ def test_cli_default_route_and_stripped_route_are_combined() -> None:
 def test_invalid_route_specs_explain_the_problem(spec: str) -> None:
     with pytest.raises(RouteConfigurationError):
         Route.parse(spec)
+
+
+@pytest.mark.parametrize(
+    ("host", "upstream"),
+    [
+        ("127.0.0.1", "http://localhost:8000"),
+        ("localhost", "http://127.0.0.1:8000"),
+        ("0.0.0.0", "http://127.0.0.1:8000"),
+        ("::", "http://[::1]:8000"),
+    ],
+)
+def test_routes_cannot_target_the_proxy_listener(host: str, upstream: str) -> None:
+    routes = RouteTable([Route.parse(f"/api={upstream}")])
+
+    with pytest.raises(
+        RouteConfigurationError,
+        match="route '/api' points to Tunnitup's own proxy at localhost:8000",
+    ):
+        validate_proxy_routes(routes, host, 8000)
+
+
+def test_routes_may_reuse_the_host_on_a_different_port() -> None:
+    routes = RouteTable([Route.parse("/api=8000")])
+
+    validate_proxy_routes(routes, "127.0.0.1", 8080)

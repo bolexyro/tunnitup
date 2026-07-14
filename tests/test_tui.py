@@ -6,7 +6,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Input, OptionList, Static
 
 from tunnitup.discovery import ServiceProbe
-from tunnitup.observability import RouteHealth
+from tunnitup.observability import RequestEvent, RouteHealth
 from tunnitup.providers.base import Tunnel
 from tunnitup.routing import Route, RouteTable
 from tunnitup.tui import (
@@ -76,6 +76,31 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         requests_width = app.screen.query_one("#requests-panel", Vertical).region.width
         assert routes_width < requests_width
         assert 0.32 <= routes_width / (routes_width + requests_width) <= 0.40
+
+
+async def test_command_center_clears_captured_traffic() -> None:
+    app = TunnitupApp(TuiRuntime(routes=RouteTable([Route.parse("/=3000")])))
+    app.observations.record(
+        RequestEvent(
+            timestamp=datetime.now(UTC),
+            method="GET",
+            path="/",
+            route_path="/",
+            upstream="http://127.0.0.1:3000",
+            status=200,
+            duration_ms=1,
+        )
+    )
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        assert app.screen.query_one("#requests-table", DataTable).row_count == 1
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert app.observations.requests == ()
+        assert app.screen.query_one("#requests-table", DataTable).row_count == 0
 
 
 def test_command_center_uses_semantic_square_health_indicators() -> None:

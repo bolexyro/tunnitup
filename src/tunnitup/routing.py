@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 from yarl import URL
@@ -101,3 +102,38 @@ class RouteTable:
 
     def match(self, request_path: str) -> Route | None:
         return next((route for route in self._routes if route.matches(request_path)), None)
+
+
+def _is_local_listener_host(host: str) -> bool:
+    normalized = host.strip("[]").casefold()
+    if normalized == "localhost":
+        return True
+    try:
+        address = ip_address(normalized)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def _targets_listener(proxy_host: str, upstream_host: str) -> bool:
+    proxy = proxy_host.strip("[]").casefold()
+    upstream = upstream_host.strip("[]").casefold()
+    if proxy == upstream:
+        return True
+    return _is_local_listener_host(proxy) and _is_local_listener_host(upstream)
+
+
+def validate_proxy_routes(routes: RouteTable, host: str, port: int) -> None:
+    """Reject upstreams that resolve back to Tunnitup's listening socket."""
+    for route in routes.routes:
+        upstream_host = route.upstream.host
+        if (
+            upstream_host is not None
+            and route.upstream.port == port
+            and _targets_listener(host, upstream_host)
+        ):
+            display_host = "localhost" if _is_local_listener_host(upstream_host) else upstream_host
+            raise RouteConfigurationError(
+                f"route {route.path!r} points to Tunnitup's own proxy at "
+                f"{display_host}:{port}; use a different upstream port or change proxy.port"
+            )

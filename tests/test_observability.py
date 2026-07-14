@@ -36,6 +36,25 @@ def test_observation_store_bounds_request_history() -> None:
     assert [event.path for event in observations.requests] == ["/two", "/three"]
 
 
+def test_clear_requests_preserves_route_health() -> None:
+    observations = ObservationStore()
+    health = RouteHealth(
+        timestamp=datetime.now(UTC),
+        route_path="/api",
+        upstream="http://127.0.0.1:8000",
+        healthy=True,
+        status=200,
+        latency_ms=1,
+    )
+
+    observations.record(request_event("/api/users"))
+    observations.record(health)
+    observations.clear_requests()
+
+    assert observations.requests == ()
+    assert observations.health == (health,)
+
+
 async def test_observation_store_publishes_live_updates_without_blocking() -> None:
     observations = ObservationStore(subscriber_queue_size=1)
 

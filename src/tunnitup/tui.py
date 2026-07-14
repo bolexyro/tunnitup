@@ -260,6 +260,7 @@ class CommandCenterScreen(TunnitupScreen):
         Binding("a", "add_route", show=False),
         Binding("e", "edit_route", show=False),
         Binding("c", "copy_url", show=False),
+        Binding("x", "clear_requests", show=False),
         Binding("d", "error_details", show=False),
         Binding("r", "refresh", show=False),
         Binding("question_mark", "help", show=False),
@@ -293,7 +294,8 @@ class CommandCenterScreen(TunnitupScreen):
         yield Static(
             "[bold #9fc8ef]↑↓[/] route    [bold #9fc8ef]enter[/] inspect    "
             "[bold #9fc8ef]a[/] add    [bold #9fc8ef]e[/] edit    "
-            "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]?[/] help",
+            "[bold #9fc8ef]c[/] copy URL    [bold #9fc8ef]x[/] clear    "
+            "[bold #9fc8ef]?[/] help",
             id="keybar",
         )
 
@@ -368,9 +370,17 @@ class CommandCenterScreen(TunnitupScreen):
         self.app.copy_to_clipboard(self.tunnitup.tunnel.public_url)
         self.notify("Public URL copied.")
 
+    def action_clear_requests(self) -> None:
+        count = len(self.tunnitup.observations.requests)
+        self.tunnitup.observations.clear_requests()
+        self.refresh_dashboard()
+        noun = "request" if count == 1 else "requests"
+        self.notify(f"Cleared {count} captured {noun}.")
+
     def action_help(self) -> None:
         self.notify(
-            "↑↓ select · Enter inspect · A add · E edit · C copy URL · Space start/stop · Q quit",
+            "↑↓ select · Enter inspect · A add · E edit · C copy URL · "
+            "X clear traffic · Space start/stop · Q quit",
             title="Keyboard controls",
             timeout=8,
         )
@@ -905,7 +915,7 @@ class TunnitupApp(App[None]):
             )
         except asyncio.CancelledError:
             raise
-        except (OSError, ProviderError) as exc:
+        except (OSError, ProviderError, RouteConfigurationError) as exc:
             self.runtime_error = str(exc)
             self.runtime_state = "error"
         finally:

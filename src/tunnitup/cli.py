@@ -26,6 +26,7 @@ from tunnitup.routing import (
     RouteTable,
     normalize_path,
     normalize_upstream,
+    validate_proxy_routes,
 )
 
 app = typer.Typer(
@@ -132,7 +133,7 @@ def _resolve_runtime(
             _fail(str(exc))
 
     defaults = loaded.settings if loaded else ProxySettings()
-    return RuntimeConfig(
+    runtime = RuntimeConfig(
         routes=route_table,
         host=host if host is not None else loaded.host if loaded else "127.0.0.1",
         port=port if port is not None else loaded.port if loaded else 8080,
@@ -148,6 +149,11 @@ def _resolve_runtime(
         tunnel=loaded.tunnel if loaded else TunnelSettings(),
         source=loaded.source if loaded else None,
     )
+    try:
+        validate_proxy_routes(runtime.routes, runtime.host, runtime.port)
+    except RouteConfigurationError as exc:
+        _fail(str(exc))
+    return runtime
 
 
 @app.command("init")

@@ -70,6 +70,10 @@ class ObservationStore:
     def requests(self) -> tuple[RequestEvent, ...]:
         return tuple(self._requests)
 
+    def clear_requests(self) -> None:
+        """Clear captured request history without discarding route health."""
+        self._requests.clear()
+
     @property
     def health(self) -> tuple[RouteHealth, ...]:
         return tuple(self._health[path] for path in sorted(self._health))

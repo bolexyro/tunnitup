@@ -71,6 +71,10 @@ def test_starter_config_is_valid_and_can_include_an_api(tmp_path: Path) -> None:
             '[tunnel]\nurl = "http://example.ngrok.app/path"\n[routes]\n"/" = 3000',
             "must be HTTPS",
         ),
+        (
+            '[proxy]\nport = 8000\n[routes]\n"/api" = 8000',
+            "points to Tunnitup's own proxy",
+        ),
         ("[proxy", "invalid TOML"),
     ],
 )
