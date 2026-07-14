@@ -457,12 +457,7 @@ class CommandCenterScreen(TunnitupScreen):
         sorted_routes = sorted(runtime.routes.routes, key=lambda item: item.path)
         for route in sorted_routes:
             result = health.get(route.path)
-            if result is None:
-                state_text = Text("●", style="#5d7390")
-            elif result.healthy:
-                state_text = Text("●", style="#5ac8fa")
-            else:
-                state_text = Text("●", style="#ef8d84")
+            state_text = self._health_indicator(result)
             route_list.add_option(
                 Option(self._route_row(route, state_text), id=route.path)
             )
@@ -515,6 +510,16 @@ class CommandCenterScreen(TunnitupScreen):
             health,
         )
         return row
+
+    @staticmethod
+    def _health_indicator(result: RouteHealth | None) -> Text:
+        if result is None:
+            color = "#5d7390"
+        elif result.healthy:
+            color = "#5ac8fa"
+        else:
+            color = "#ef8d84"
+        return Text("■", style=color)
 
     def _project_label(self) -> str:
         source = self.tunnitup.runtime.source if self.tunnitup.runtime else None
@@ -678,7 +683,7 @@ class TunnitupApp(App[None]):
     }
 
     #command-topbar {
-        height: 3;
+        height: 4;
         padding: 0 1;
         background: #1d2b3b;
         border-bottom: solid #34465c;

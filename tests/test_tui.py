@@ -1,10 +1,12 @@
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Input, OptionList, Static
 
 from tunnitup.discovery import ServiceProbe
+from tunnitup.observability import RouteHealth
 from tunnitup.providers.base import Tunnel
 from tunnitup.routing import Route, RouteTable
 from tunnitup.tui import (
@@ -63,7 +65,7 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         assert app.screen.query_one("#requests-table", DataTable).row_count == 0
         assert "STOPPED" in str(app.screen.query_one("#runtime-state", Static).render())
         topbar = app.screen.query_one("#command-topbar", Horizontal)
-        assert topbar.region.height == 3
+        assert topbar.region.height == 4
         assert topbar.region.width == 120
         assert app.screen.query_one("#live-strip", Horizontal).region.height == 2
         assert not app.screen.query("#add-route")
@@ -74,6 +76,17 @@ async def test_tui_opens_command_center_for_existing_runtime() -> None:
         requests_width = app.screen.query_one("#requests-panel", Vertical).region.width
         assert routes_width < requests_width
         assert 0.32 <= routes_width / (routes_width + requests_width) <= 0.40
+
+
+def test_command_center_uses_semantic_square_health_indicators() -> None:
+    now = datetime.now(UTC)
+    healthy = RouteHealth(now, "/", "localhost:3000", True, 200, 1.0)
+    unhealthy = RouteHealth(now, "/", "localhost:3000", False, 500, 1.0)
+
+    assert CommandCenterScreen._health_indicator(None).plain == "■"
+    assert CommandCenterScreen._health_indicator(None).style == "#5d7390"
+    assert CommandCenterScreen._health_indicator(healthy).style == "#5ac8fa"
+    assert CommandCenterScreen._health_indicator(unhealthy).style == "#ef8d84"
 
 
 def test_command_center_summarizes_known_ngrok_errors() -> None:
